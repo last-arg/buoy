@@ -1,0 +1,30 @@
+#!/bin/sh
+
+Xephyr +extension RANDR -screen 1200x500 -ac -wr -noreset -zap :1 &
+sleep 1 
+xrandr --display :1 --setmonitor FAKE~1 600/254x500/286+0+0 default
+xrandr --display :1 --setmonitor FAKE~2 600/254x500/286+600+0 none
+# xrandr --display :1 --fb 1401x500
+# xrandr --display :1 --fb 1400x500
+
+
+# Adding new mode in xrandr
+# xrandr --display :1 --newmode "320x240_60.00" 6.00 320 336 360 400 240 243 247 252 -hsync +vsync
+# xrandr --display :1 --addmode default 320x240_60.00
+
+
+# This keeps script running in terminal foreground
+echo $! > service.pid
+
+finish()
+{
+    rm tmpfiles
+    kill $(cat service.pid)
+    exit
+}
+trap finish SIGINT
+
+while :; do
+    sleep 5
+done
+

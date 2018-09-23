@@ -1,0 +1,8 @@
+Moving group from one monitor to another:
+- First check if there are any windows in group.
+- If there are check the first window's screen_index against target screen index.
+Or/And compare screen width and height to determine if windows need recalculations
+- Do the recalculations.
+TODO: Take into account if any window side toches a tile border ???
+
+
