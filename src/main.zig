@@ -100,9 +100,8 @@ const WindowsHashMap = HashMap(c_ulong, Window, getWindowHash, comptime hash_map
 
 // ------- CONFIG -------
 const BORDER_WIDTH = 10;
-// NOTE: window width/height without border
-var window_min_width: i32 = 100;
-var window_min_height: i32 = 100;
+var window_min_width: i32 = 100; // NOTE: without border
+var window_min_height: i32 = 100; // NOTE: without border
 var number_of_groups: u8 = 10;
 var default_color: xlib.XColor = undefined;
 var active_color: xlib.XColor = undefined;
@@ -617,16 +616,13 @@ pub fn main() !void {
                 // warn("motion notify\n");
                 // warn("{}\n", ev.xmotion);
 
-                var new_mouse_screen: ?*Screen = undefined;
+                // Check for screen/monitor change
                 var current_mouse_active_screen = getActiveMouseScreen(screens);
-                if (screens.len > 1) {
-                    new_mouse_screen = checkActiveScreen(ev.xmotion.x_root, ev.xmotion.y_root, screens, current_mouse_active_screen);
+                var has_active_screen_changed = hasActiveScreenChanged(ev.xmotion.x_root, ev.xmotion.y_root, screens, current_mouse_active_screen);
 
-                    if (new_mouse_screen != null) {
-                        active_mouse_screen = new_mouse_screen.?.index;
-                    }
+                if (has_active_screen_changed) {
+                    current_mouse_active_screen = getActiveMouseScreen(screens);
                 }
-
 
                 if (start.window != 0) {
                     if (start.button == 1) {
@@ -639,7 +635,7 @@ pub fn main() !void {
                                           attr.y + ydiff);
                         }
                         else {
-                            motionKeepWindowInBounds(dpy, active_mouse_screen, start, ev.xbutton, attr, screens);
+                            motionKeepWindowInBounds(dpy, current_mouse_active_screen.index, start, ev.xbutton, attr, screens);
                         }
                     }
                     else if (start.button == 3) {
@@ -647,10 +643,17 @@ pub fn main() !void {
                             var xdiff = ev.xbutton.x_root - start.x_root;
                             var ydiff = ev.xbutton.y_root - start.y_root;
 
-                            // TODO: Fix bug that takes width/height to negative numbers
+                            var new_width = attr.width + xdiff;
+                            if (new_width < window_min_width) {
+                                new_width = window_min_width;
+                            }
+                            var new_height = attr.height + ydiff;
+                            if (new_height < window_min_height) {
+                                new_height = window_min_height;
+                            }
                             _ = xlib.XResizeWindow(dpy, start.window,
-                                          @intCast(c_uint, attr.width + xdiff),
-                                          @intCast(c_uint, attr.height + ydiff));
+                                                   @intCast(c_uint, new_width),
+                                                   @intCast(c_uint, new_height));
                         }
                         else {
                             var window = windows.get(start.window);
@@ -658,15 +661,14 @@ pub fn main() !void {
                         }
                     }
 
-                } else if (new_mouse_screen != null and
+                } else if (has_active_screen_changed and
                     (ev.xmotion.subwindow == 0 or 
                      (active_window != null and active_window.?.id != ev.xmotion.subwindow))) {
 
                     // TODO: window won't loose focus if other screen has no windows
-                    var new_mouse_active_screen = getScreen(new_mouse_screen.?.index, screens);
-                    if (new_mouse_active_screen.windows.first != null) {
+                    if (current_mouse_active_screen.windows.first != null) {
                         warn("active window\n");
-                        var focus_win = new_mouse_active_screen.windows.first.?.data;
+                        var focus_win = current_mouse_active_screen.windows.first.?.data;
                         _ = xlib.XSetInputFocus(dpy, focus_win, xlib.RevertToParent, CurrentTime);
                     }  
                     else if (active_window != null) {
@@ -1033,6 +1035,23 @@ fn checkActiveScreen(x: c_int, y: c_int, screens: LinkedList(Screen), active_scr
     }
 
     return null;
+}
+
+
+
+fn hasActiveScreenChanged(x: c_int, y: c_int, screens: LinkedList(Screen), active_screen: *Screen) bool {
+    var screen = screens.first;
+    while (screen != null) : (screen = screen.?.next) {
+        if (screen.?.data.index == active_screen.index) continue;
+        if (isPointerInScreen(screen.?.data, x, y)) { 
+            warn("Change screen {}\n", screen.?.data.index);
+            active_screen.has_mouse = false;
+            screen.?.data.has_mouse = true;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 
