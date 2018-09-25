@@ -1,5 +1,7 @@
 // use "./debug.zig".; // TODO: move debug functions to its own file
 const std = @import("std");
+const fmt = std.fmt;
+const cstr = std.cstr;
 const warn = std.debug.warn;
 const mem = std.mem;
 const Allocator = mem.Allocator;
@@ -106,22 +108,23 @@ var number_of_groups: u8 = 10;
 var default_color: xlib.XColor = undefined;
 var active_color: xlib.XColor = undefined;
 
+var group_cstrings: []const [*]const u8 = undefined;
+
 pub fn main() !void {
     var active_window: ?*Window = null;
-    var active_mouse_screen: c_int = undefined;
-
     var attr: xlib.XWindowAttributes = undefined;
     var start: xlib.XButtonEvent = undefined;
     var ev: xlib.XEvent = undefined;
     const dpy = xlib.XOpenDisplay(null);
 
     var dummy_win: xlib.Window = undefined;
+    var exact_color: xlib.XColor = undefined;
 
     // TODO: Change/Add different allocator(s)
     const allocator = std.heap.c_allocator;
 
     if (dpy == null) {
-      return error.FailedXOpenDisplay;
+      return error.FailedToOpenDisplay;
     }
 
     var screen_count = xlib.XScreenCount(dpy);
@@ -146,6 +149,22 @@ pub fn main() !void {
     _ = xlib.XGrabKey(dpy, xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"e")), Mod1Mask, default_root, xlib.True, xlib.GrabModeAsync, xlib.GrabModeAsync, );
 
 
+    // TODO: Replace/Remove hardcoded c string values.
+    // @GroupKeys
+    group_cstrings = []const [*]const u8{c"1", c"2", c"3", c"4", c"5", c"6", c"7", c"8", c"9", c"0"};
+    {
+        // TODO: convert number to string and string to c string
+        // var buffer: [1]u8 = undefined;
+        // var buf = buffer[0..];
+        // var i: u8 = 0;
+        // while (i < number_of_groups) : (i += 0) {
+        for (group_cstrings) |str| {
+            // _ = fmt.formatIntBuf(buf, i, 10, false, 0);
+            // var key_str = try cstr.addNullByte(allocator, buf);
+            _ = xlib.XGrabKey(dpy, xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(str)), Mod1Mask, default_root, xlib.True, xlib.GrabModeAsync, xlib.GrabModeAsync, );
+        }
+    }
+
     _ = xlib.XSetErrorHandler(errorHandler);
 
 
@@ -156,10 +175,8 @@ pub fn main() !void {
     defer windows.deinit();
 
 
-
     // Monitor setup
     // TODO: Monitor is added/removed
-    // TODO: Group/Workspace number has to be greater or equal to screen/monitor count
 
     // NOTE: Function 'XRRGetMonitors' requires minimum RandR version 1.5
     // This also detects 'monitors' in Xephyr test environment
@@ -198,7 +215,10 @@ pub fn main() !void {
         var monitor = monitor_info.?[j];
 
         var screen = Screen {
-            .has_mouse = (j == 0),
+            // TODO: use primary monitor attribute to set has_mouse
+            // TODO: warp mouse pointer middle of primary monitor ???
+            // NOTE: Xephyr test environment doesn't have primary monitor
+            .has_mouse = (j == 1),
              // TODO: use xrandr name field instead ???
              // TODO: Change type to some other integer ???
             .index = @intCast(c_int, j),
@@ -215,14 +235,6 @@ pub fn main() !void {
 
         var node_ptr = try screens.createNode(screen, allocator);
         screens.append(node_ptr);
-
-
-        // TODO: warp mouse pointer middle of primary monitor ???
-        // NOTE: Xephyr test environment doesn't have primary monitor
-        if (j == 0) {
-            // TODO: Set it to primary monitor ???
-            active_mouse_screen = screen.index;
-        }
     }
 
     // TODO: client communication
@@ -244,20 +256,22 @@ pub fn main() !void {
     // _ = xlib.XChangeProperty(dpy, default_root, net_current_desktop, xatom.XA_CARDINAL, 32, xlib.PropModeReplace, data2, 1);
 
 
-
     // Set colors
-    // TODO: color on different screens/monitors ???
-    // TODO: defer XFreeColors
-    _ = xlib.XAllocNamedColor(dpy, xlib.XDefaultColormap(dpy, xlib.XDefaultScreen(dpy)), c"grey", &default_color, &default_color);
+    // NOTE: exact_color returns exact RGB values
+    // default/active_color return closest hardware RGB values
+    var default_colormap = xlib.XDefaultColormap(dpy, xlib.XDefaultScreen(dpy));
+    _ = xlib.XAllocNamedColor(dpy, default_colormap, c"grey", &default_color, &exact_color);
 
-    _ = xlib.XAllocNamedColor(dpy, xlib.XDefaultColormap(dpy, xlib.XDefaultScreen(dpy)), c"blue", &active_color, &active_color);
-
+    _ = xlib.XAllocNamedColor(dpy, default_colormap, c"blue", &active_color, &exact_color);
+    defer {
+        _ = xlib.XFreeColors(dpy, default_colormap, &default_color.pixel, 1, 0);
+        _ = xlib.XFreeColors(dpy, default_colormap, &active_color.pixel, 1, 0);
+    }
 
 
     // Add/Discover existing windows
     var children: ?[*](xlib.Window) = undefined; 
     var n_children: c_uint = undefined;
-
     _ = xlib.XQueryTree(dpy, default_root, &dummy_win, &dummy_win, &children, &n_children);
 
     warn("Existing children {}\n", n_children);
@@ -298,9 +312,8 @@ pub fn main() !void {
     // var nofocus = xlib.XCreateSimpleWindow(dpy, default_root, -10, -10, 1, 1, 0, 0, 0);
 
     // Set active_window
-    var mouse_screen = getActiveMouseScreen(screens);
-    if (mouse_screen.windows.first != null) {
-        var win_id = mouse_screen.windows.first.?.data;
+    if (getActiveMouseScreen(screens).windows.first) |screen_win_node| {
+        var win_id = screen_win_node.data;
         warn("Set active window: {}\n", win_id);
         _ = xlib.XGetWindowAttributes(dpy, win_id, &attr);
         var event_send: xlib.XConfigureEvent = xlib.XConfigureEvent {
@@ -329,7 +342,6 @@ pub fn main() !void {
     // _ = xlib.XFlush(dpy);
     // _ = xlib.XSync(dpy, xlib.False);
 
-
     debugScreens(screens, windows);
     debugWindows(windows);
     debugGroups(groups);
@@ -338,16 +350,14 @@ pub fn main() !void {
 
     while (true) {
         _ = xlib.XNextEvent(dpy, &ev);
-
         //
         // Event types
         // https://tronche.com/gui/x/xlib/events/types.html
         // 
-
-
-        // if (ev.type != 6) warn("{} ", ev.type);
         switch (ev.type) {
-            xlib.CreateNotify => warn("create notify\n"),
+            xlib.CreateNotify => {
+                warn("create notify\n");
+            },
             xlib.DestroyNotify => {
                 warn("destroy notify\n");
                 warn("\tid: {}\n", ev.xdestroywindow);
@@ -355,7 +365,6 @@ pub fn main() !void {
                 var win = windows.get(ev.xdestroywindow.window);
                 if (win == null) continue;
 
-                var next_active_window: ?xlib.Window = null;
                 var screen = getScreen(win.?.value.screen_index, screens);
 
                 // Remove window from Group
@@ -372,83 +381,40 @@ pub fn main() !void {
                 var screen_win = screen.windows.first;
                 while (screen_win != null) : (screen_win = screen_win.?.next) {
                     if (screen_win.?.data == win.?.value.id) {
-                        if (screen_win.?.next != null) {
-                            next_active_window = screen_win.?.next.?.data;
-                        }
                         screen.windows.remove(screen_win.?);
                         screen.windows.destroyNode(screen_win.?, allocator);
                         break;
                     }
                 }
 
+                // Remove group from Screen
+                // TODO: remove group from Screen if no windows in Group ???
+                // TODO: At the moment code removes group even if there are more
+                // windows in that group.
+                // if (screen.groups.len > 1) {
+                //     var screen_group = screen.groups.first;
+                //     while (screen_group != null) : (screen_group = screen_group.?.next) {
+                //         if (screen_group.?.data == win.?.value.group_index) {
+                //             screen.groups.remove(screen_group.?);
+                //             screen.groups.destroyNode(screen_group.?, allocator);
+                //             break;
+                //         }
+                //     }
+                // }
+
+                // Remove window from windows hash map
                 _ = windows.remove(win.?.value.id);
 
                 // Set new active window
-                if (next_active_window != null) {
-                    _ = xlib.XSetInputFocus(dpy, next_active_window.?, xlib.RevertToParent, CurrentTime);
-                } else if (active_window != null) {
-                    _ = xlib.XSetWindowBorder(dpy, active_window.?.id, default_color.pixel);
-                    active_window = null;
-                }
-
-
+                updateFocus(dpy, null, screen.windows.first, default_color, active_color);
                 debugScreens(screens, windows);
                 debugWindows(windows);
                 debugGroups(groups);
             },
             xlib.ReparentNotify => warn("reparent notify\n"),
             xlib.FocusIn => {
-                // warn("focus in\n");
-                // warn("\tid: {}\n", ev.xfocus);
-
-                // NOTE: NotifyPointer makes sure unmapped window isn't re-added to
-                // screen's windows list
-                // NOTE: active_window check might not be needed
-                if ((active_window != null and
-                    active_window.?.id == ev.xfocus.window)
-                    or ev.xfocus.detail == NotifyPointer) {
-                    continue;
-                }
-
                 warn("focus in\n");
                 // warn("\tid: {}\n", ev.xfocus);
-
-                if (active_window != null and active_window.?.id != ev.xfocus.window) {
-                    _ = xlib.XSetWindowBorder(dpy, active_window.?.id, default_color.pixel);
-                }
-
-                
-                var win = windows.get(ev.xfocus.window);
-                if (win != null) {
-                    // Move window infront of screen stack
-                    var win_screen = getScreen(win.?.value.screen_index, screens);
-                    // warn("{}\n", win_screen);
-                    var win_node = win_screen.windows.first;
-                    while (win_node != null) : (win_node = win_node.?.next) {
-                        if (win_node.?.data == ev.xfocus.window) {
-                            win_screen.windows.remove(win_node.?);
-                            win_screen.windows.prepend(win_node.?);
-                            break;
-                        }
-                    }
-
-
-                    // Move window infront of group stack
-                    var group_index = win.?.value.group_index;
-                    var group = groups.toSlice();
-                    var group_win_node = group[group_index].windows.first;
-                    while (group_win_node != null) : (group_win_node = group_win_node.?.next) {
-                        if (group_win_node.?.data == win.?.value.id) {
-                            group[group_index].windows.remove(group_win_node.?);
-                            group[group_index].windows.prepend(group_win_node.?);
-                            break;
-                        }
-                    }
-                }
-
-                _ = xlib.XSetWindowBorder(dpy, ev.xfocus.window, active_color.pixel);
-                _ = xlib.XRaiseWindow(dpy, ev.xfocus.window);
-                active_window = &win.?.value;                
             },
             xlib.FocusOut => {
                 warn("focus out\n");
@@ -460,71 +426,70 @@ pub fn main() !void {
             xlib.UnmapNotify => {
                 warn("unmap notify\n");
                 // warn("{}\n", ev.xunmap);
-
-                if (active_window == null or active_window.?.id != ev.xunmap.window) continue;
-
-
-                // Remove window from screens.windows
-                // TODO: Have to re-check this in connection with Groups, Window and Screens
-                // var win = windows.get(ev.xunmap.window);
-                // var win_screen = getScreen(win.?.value.screen_index, screens);
-                // var node = win_screen.windows.first;
-                // var next_active_window: ?xlib.Window = null;
-                // while (node != null) : (node = node.?.next) {
-                //     if (node.?.data == ev.xunmap.window) {
-                //         if (node.?.next != null) {
-                //             next_active_window = node.?.next.?.data;
-                //         }
-
-                //         win_screen.windows.remove(node.?);
-                //         win_screen.windows.destroyNode(node.?, allocator); 
-
-                //         break;
-                //     }
-                // }
-
-
-                // if (next_active_window != null) {
-                //     _ = xlib.XSetInputFocus(dpy, next_active_window.?, xlib.RevertToParent, CurrentTime);
-                // } else {
-                //     _ = xlib.XSetWindowBorder(dpy, active_window.?.id, default_color.pixel);
-                // }
-
-                // active_window = null;
             },
             xlib.ConfigureNotify => {
                 // warn("configure notify\n");
             },
             xlib.EnterNotify => {
-                if (start.window != 0 or 
+                if (start.window != 0 or
+                    ev.xcrossing.detail == xlib.NotifyInferior or
                     ev.xcrossing.mode != xlib.NotifyNormal) {
                     continue;
                 }
+
                 warn("enter notify\n");
                 warn("\tid: {}\n", ev.xcrossing);
 
+// TODO: Can maybe remove ???
                 if (start.window == 0) {
-                    _ = xlib.XSetInputFocus(dpy, ev.xcrossing.window, xlib.RevertToParent, CurrentTime);
+                    var win = windows.get(ev.xcrossing.window);
+                    var active_mouse_screen = getActiveMouseScreen(screens);
+                    var old_active_window = active_mouse_screen.windows.first;
+
+                    if (win == null or (old_active_window != null and ev.xcrossing.window == old_active_window.?.data)) continue;
+
+
+                    // Move window infront of Screen windows
+                    var win_screen = getScreen(win.?.value.screen_index, screens);
+                    var win_node = win_screen.windows.first;
+                    while (win_node != null) : (win_node = win_node.?.next) {
+                        if (win_node.?.data == ev.xfocus.window) {
+                            win_screen.windows.remove(win_node.?);
+                            win_screen.windows.prepend(win_node.?);
+                            break;
+                        }
+                    }
+
+                    // Move group index infront of Screen groups
+                    var group_node = win_screen.groups.first;
+                    if (win_screen.groups.len > 1 and group_node.?.data != win.?.value.group_index) {
+                        while (group_node != null) : (group_node = group_node.?.next) {
+                            if (group_node.?.data == win.?.value.group_index) {
+                                win_screen.groups.remove(group_node.?);
+                                win_screen.groups.prepend(group_node.?);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Move window infront of Group windows
+                    var group_index = win.?.value.group_index;
+                    var group = groups.toSlice();
+                    var group_win_node = group[group_index].windows.first;
+                    while (group_win_node != null) : (group_win_node = group_win_node.?.next) {
+                        if (group_win_node.?.data == win.?.value.id) {
+                            group[group_index].windows.remove(group_win_node.?);
+                            group[group_index].windows.prepend(group_win_node.?);
+                            break;
+                        }
+                    }
+
+                    // Update focus
+                    updateFocus(dpy, old_active_window, active_mouse_screen.windows.first, default_color, active_color);
                 }
             },
             xlib.LeaveNotify => {
-                // warn("{}\n", ev.xcrossing);
-
-                if (start.window != 0 or active_window == null or 
-                    ev.xcrossing.detail == xlib.NotifyInferior or
-                    ev.xcrossing.detail == xlib.NotifyNonlinearVirtual) continue;
                 warn("leave notify\n");
-
-                var mouse_active = getActiveMouseScreen(screens);
-                if (mouse_active.index != active_window.?.screen_index) {
-                    var win = mouse_active.windows.first;
-                    if (win != null) {
-                        _ = xlib.XSetInputFocus(dpy, win.?.data, xlib.RevertToParent, CurrentTime);
-                    } else {
-                        _ = xlib.XSetWindowBorder(dpy, active_window.?.id, default_color.pixel);
-                        active_window = null;
-                    }
-                }
             },
             xlib.MapRequest => {
                 warn("map request\n");
@@ -535,13 +500,24 @@ pub fn main() !void {
                     continue;
                 }
 
-                var mouse_active = getActiveMouseScreen(screens);
-                try addWindow(dpy, ev.xmaprequest.window, attr, BORDER_WIDTH, default_color, mouse_active, allocator, &windows, &groups);
-                _ = xlib.XSetInputFocus(dpy, ev.xmaprequest.window, xlib.RevertToParent, CurrentTime);
+                if (!windows.contains(ev.xmaprequest.window)) {
+                    var mouse_active = getActiveMouseScreen(screens);
+                    var old_active_window = mouse_active.windows.first;
+                    try addWindow(dpy, ev.xmaprequest.window, attr, BORDER_WIDTH, default_color, mouse_active, allocator, &windows, &groups);
 
-                    debugScreens(screens, windows);
-                    debugWindows(windows);
-                    debugGroups(groups);
+                    _ = xlib.XMapWindow(dpy, ev.xmaprequest.window);
+
+                    // Update focus
+                    updateFocus(dpy, old_active_window, mouse_active.windows.first, default_color, active_color);
+
+
+
+
+                }
+
+                debugScreens(screens, windows);
+                debugWindows(windows);
+                debugGroups(groups);
             },
             xlib.ConfigureRequest => {
                 warn("configure request\n");
@@ -618,6 +594,7 @@ pub fn main() !void {
 
                 // Check for screen/monitor change
                 var current_mouse_active_screen = getActiveMouseScreen(screens);
+                var old_active_window = current_mouse_active_screen.windows.first;
                 var has_active_screen_changed = hasActiveScreenChanged(ev.xmotion.x_root, ev.xmotion.y_root, screens, current_mouse_active_screen);
 
                 if (has_active_screen_changed) {
@@ -662,116 +639,164 @@ pub fn main() !void {
                     }
 
                 } else if (has_active_screen_changed and
-                    (ev.xmotion.subwindow == 0 or 
-                     (active_window != null and active_window.?.id != ev.xmotion.subwindow))) {
+                    ev.xmotion.subwindow == 0) {
 
-                    // TODO: window won't loose focus if other screen has no windows
-                    if (current_mouse_active_screen.windows.first != null) {
-                        warn("active window\n");
-                        var focus_win = current_mouse_active_screen.windows.first.?.data;
-                        _ = xlib.XSetInputFocus(dpy, focus_win, xlib.RevertToParent, CurrentTime);
-                    }  
-                    else if (active_window != null) {
-                        warn("no windows");
-                        _ = xlib.XSetWindowBorder(dpy, active_window.?.id, default_color.pixel);
-                        _ = xlib.XSetInputFocus(dpy, @intCast(c_ulong, xlib.PointerRoot), xlib.RevertToParent, CurrentTime);
-                        active_window = null;
+                    // NOTE: Have to make sure old screen's active window looses active
+                    // color.
+                    // TODO: Do I want the window to loose focus if there is no window
+                    // in the new window ???
+                    if (old_active_window) |old_win| {
+                        _ = xlib.XSetWindowBorder(dpy, old_win.data, default_color.pixel);
                     }
+                    updateFocus(dpy, null, current_mouse_active_screen.windows.first, default_color, active_color);
                 }
             },
             xlib.KeyPress => {
                 warn("key press\n");
-                if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"e"))) {
-                    // moveMouseToAnotherScreen(dpy, ev.xkey.root, screens, ev.xkey.x_root, ev.xkey.y);
+                // warn("{}\n", ev.xkey);
+
+                if (default_root == ev.xkey.window) {
+                    // Root window events
+                    if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"e"))) {
+                        // moveMouseToAnotherScreen(dpy, ev.xkey.root, screens, ev.xkey.x_root, ev.xkey.y);
+
+                    } else if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"t"))) {
+                        warn("open xterm\n");
+                            
+                        var argv = []const []const u8{"xterm"};
+
+                        var child_result = try child.init(argv, allocator);
+                        var env_map = try os.getEnvMap(allocator);
+                        child_result.env_map = env_map;
+                        _ = try child.spawn(child_result);
+
+                    } else {
+                        // TODO: change this to window's active screen ???
+                        // More accurate would be to say that active screen
+                        // would have top priority over mouse active screen
+                        var active_mouse_screen = getActiveMouseScreen(screens);
+                        var screen_group_node = active_mouse_screen.groups.first;
+                        var old_active_window = active_mouse_screen.windows.first;
 
 
-                } 
-                else if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"t"))) {
-                    warn("open xterm\n");
-                    warn("\troot id: {}\n", ev.xkey.root);
-                        
-                    var argv = []const []const u8{"xterm"};
+                        // TODO: @GroupKeys
+                        for (group_cstrings) |c_str, i| {
+                            if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c_str))) {
+                                // TODO: check selected group status
+                                // Based on status group can be:
+                                // - move to the front
+                                // - hidden/remove from screen/monitor
+                                // - displayed
+                                warn("group status: {}\n", i);
+
+                                var win = blk: {
+                                    if (active_mouse_screen.windows.first != null) {
+                                        break :blk windows.get(active_mouse_screen.windows.first.?.data);
+                                    }
+                                    break :blk null;
+                                };
 
 
-                    var child_result = try child.init(argv, allocator);
-                    var env_map = try os.getEnvMap(allocator);
-                    // try env_map.set("DISPLAY", ":1.0");
-                    child_result.env_map = env_map;
-                    _ = try child.spawn(child_result);
+                                if (active_mouse_screen.groups.len > 1 and
+                                    ((win != null and win.?.value.group_index == i) or
+                                     (win == null and active_mouse_screen.groups.first.?.data == i))) {
 
-                }
-                else if (ev.xkey.window != 0) {
-                    if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"F1"))) {
-                    // warn("{}\n", ev.xkey);
+warn("-----HIDE WINDOWS----\n");
+                                    // Remove group from Screen
+                                    while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
+                                        if (screen_group_node.?.data == i) {
+                                            active_mouse_screen.groups.remove(screen_group_node.?);
+                                            active_mouse_screen.groups.destroyNode(screen_group_node.?, allocator);
+                                            break;
+                                        }
+                                    }
+                                    // Remove windows from Screen.windows list
+                                    var node = active_mouse_screen.windows.first;
+                                    while (node != null) : (node = node.?.next) {
+                                        var win_info = windows.get(node.?.data);
+                                        if (win_info != null and win_info.?.value.group_index == i) {
+                                            _ = xlib.XUnmapWindow(dpy, win_info.?.value.id);
+                                            active_mouse_screen.windows.remove(node.?);
+                                            active_mouse_screen.windows.destroyNode(node.?, allocator);
+                                        }
+                                    }
 
-                    // If windows focuses stretches screens
-                    // - window is focused on non active screen (active mouse screen)
-                    // - window is move to active mouse screen
-                    // - first item of active screen becomes active
+                                    // New active window
+                                    updateFocus(dpy, old_active_window, active_mouse_screen.windows.first, default_color, active_color);
+                                } else {
+                                    warn("-----RAISE WINDOWS----\n");
 
-                    // TODO
-                    // Move window to another screen
-                    // - unfocus window
-                    // - move window to other screen
-                    // - find new window to focus on active screen
-                    // Transform window x, y, width and height ???
+                                    // TODO: check if other Screen groups have group
+                                    var new_node: ?*LinkedList(u8).Node = null;
+                                    while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
+                                        if (screen_group_node.?.data == i) {
+                                            new_node = screen_group_node.?;
+                                            active_mouse_screen.groups.remove(screen_group_node.?);
+                                            break;
+                                        }
+                                    }
 
-                    var win = windows.get(ev.xkey.window);
-                    _ = xlib.XGetWindowAttributes(dpy, ev.xkey.window, &attr);
-                    warn("{}\n", attr);
+                                    if (new_node == null) {
+                                        new_node = try active_mouse_screen.groups.createNode(@intCast(u8, i), allocator);
 
+                                        warn("new node \n");
+                                        var group_win_node = groups.at(i).windows.last;
+                                        while (group_win_node != null) : (group_win_node = group_win_node.?.prev) {
+                                            var new_win_node = try active_mouse_screen.windows.createNode(group_win_node.?.data, allocator);
+                                            active_mouse_screen.windows.prepend(new_win_node);
+                                            _ = xlib.XMapWindow(dpy, group_win_node.?.data);
+                                            _ = xlib.XRaiseWindow(dpy, group_win_node.?.data);
 
-                    if (win != null) {
-                        // var active_screen = win.?.value.screen;
-                        var active_screen = getScreen(win.?.value.screen_index, screens);
-                        var next_screen: Screen = undefined;
-                        var new_x: c_int = undefined;
-                        var new_y: c_int = undefined;
-                        warn("nr: {}\n", active_screen.index);
-                        // TODO: works with two screens only
-                       if (active_screen.index ==0) {
-                            next_screen = screens.first.?.next.?.data;
-                            new_x = next_screen.x + attr.x;
-                            new_y = next_screen.y + attr.y;                        
-                        }
-                        else {
-                            next_screen = screens.first.?.data;
-                            new_x = attr.x - next_screen.x;
-                            new_y = attr.y - next_screen.y;                        
-                        }
+                                        }
+                                    } else {
+                                        warn("old node \n");
+                                        var group_win_node = groups.at(i).windows.last;
+                                        while (group_win_node != null) : (group_win_node = group_win_node.?.prev) {
+                                            warn("raise old: {}\n", group_win_node.?.data);
+                                            _ = xlib.XRaiseWindow(dpy, group_win_node.?.data);
+                                            // TODO: Make it more efficient.
+                                            // Try to make it into one loop
+                                            var win_node = active_mouse_screen.windows.first;
+                                            while (win_node != null) : (win_node = win_node.?.next) {
+                                                if (win_node.?.data == group_win_node.?.data) {
+                                                    active_mouse_screen.windows.remove(win_node.?);
+                                                    active_mouse_screen.windows.prepend(win_node.?);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
 
-                        var width_ratio = @intToFloat(f32, next_screen.width) / @intToFloat(f32, active_screen.width);
-                        var height_ratio = @intToFloat(f32, next_screen.height) / @intToFloat(f32, active_screen.height);
+                                    active_mouse_screen.groups.prepend(new_node.?);
 
-                        var new_width = @floatToInt(c_uint, @intToFloat(f32, attr.width) * width_ratio);
-                        var new_height = @floatToInt(c_uint, @intToFloat(f32, attr.height) * height_ratio);
+                                    updateFocus(dpy, old_active_window, active_mouse_screen.windows.first, default_color, active_color);
+                                }
 
-                        var node = active_screen.windows.first;
-                        while (node != null) : (node = node.?.next) {
-                            if (node.?.data == win.?.value.id) {
-                                active_screen.windows.remove(node.?);
-                                active_screen.index = next_screen.index;
-                                active_screen.windows.prepend(node.?);
-                                // active_window = null;
                                 break;
                             }
+
                         }
 
-                        debugScreenWindows(screens);
-                        debugWindows(windows);
-
-                        warn("{} {}\n", new_x, new_y);
-                        warn("{} {}\n", new_width, new_height);
-
-                        _ = xlib.XMoveResizeWindow(dpy, win.?.value.id, new_x, new_y, new_width, new_height);
-
+                        debugScreens(screens, windows);
                     }
-
+                } else if (windows.contains(ev.xkey.window)) {
+                    // General window events
+                    if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"F1"))) {
+                        // Test
+                        warn("window event\n");
                     } else if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"w"))) {
                         var result = xlib.XGetWindowAttributes(dpy, ev.xkey.window, &attr);
                         if (result != 0) {
                             var mouse_active_screen = getActiveMouseScreen(screens);
                             setWindowInsideScreen(dpy, ev.xkey.window, attr, mouse_active_screen);
+                        }
+                    } else {
+                        // TODO: @GroupKeys
+                        for (group_cstrings) |str, i| {
+                            if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(str))) {
+                                warn("move window to group: {}\n", i);
+                                break;
+                            }
                         }
                     }
                 }
@@ -983,13 +1008,20 @@ fn setWindowInsideScreen(dpy: ?*xlib.Display, window: xlib.Window, w_attr: xlib.
 
 fn setWindowKeyAndButtonEvents(dpy: ?*xlib.Display, win: xlib.Window) void {
 
+    // Keyboard
     _ = xlib.XGrabKey(dpy, xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"F1")), Mod1Mask, win, xlib.True, xlib.GrabModeAsync, xlib.GrabModeAsync, );
 
     // _ = xlib.XGrabKey(dpy, xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"e")), Mod1Mask, win, xlib.True, xlib.GrabModeAsync, xlib.GrabModeAsync, );
 
     _ = xlib.XGrabKey(dpy, xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c"w")), Mod1Mask, win, xlib.True, xlib.GrabModeAsync, xlib.GrabModeAsync, );
 
+    // TODO: @GroupKeys
+    for (group_cstrings) |str| {
+        _ = xlib.XGrabKey(dpy, xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(str)), Mod1Mask|ShiftMask, win, xlib.True, xlib.GrabModeAsync, xlib.GrabModeAsync, );
+    }
 
+
+    // Mouse 
     _ = xlib.XGrabButton(dpy, 1, Mod1Mask, win, xlib.True, ButtonPressMask|ButtonReleaseMask|PointerMotionMask, xlib.GrabModeAsync, xlib.GrabModeAsync, 0, 0);
 
     _ = xlib.XGrabButton(dpy, 1, Mod1Mask|ShiftMask, win, xlib.True, ButtonPressMask|ButtonReleaseMask|PointerMotionMask, xlib.GrabModeAsync, xlib.GrabModeAsync, 0, 0);
@@ -999,7 +1031,10 @@ fn setWindowKeyAndButtonEvents(dpy: ?*xlib.Display, win: xlib.Window) void {
     _ = xlib.XGrabButton(dpy, 3, Mod1Mask|ShiftMask, win, xlib.True, ButtonPressMask|ButtonReleaseMask|PointerMotionMask, xlib.GrabModeAsync, xlib.GrabModeAsync, 0, 0);
 
 
-    _ = xlib.XSelectInput(dpy, win, EnterWindowMask|LeaveWindowMask|FocusChangeMask|SubstructureNotifyMask);
+    _ = xlib.XSelectInput(dpy, win, EnterWindowMask|SubstructureNotifyMask);
+    // _ = xlib.XSelectInput(dpy, win, EnterWindowMask|LeaveWindowMask|FocusChangeMask|SubstructureNotifyMask);
+
+
 
 }
 
@@ -1127,21 +1162,22 @@ fn addWindow(dpy: ?*xlib.Display, win: xlib.Window, win_attr: xlib.XWindowAttrib
 
 
     setWindowKeyAndButtonEvents(dpy, win);
-    _ = xlib.XRaiseWindow(dpy, win);
+    // _ = xlib.XRaiseWindow(dpy, win);
 
     var group_index = blk: {
 
-        var first_window = screen.windows.first;
-        if (first_window != null) {
-            var win_info = windows.get(first_window.?.data);
-            if (win_info != null) {
-                break :blk win_info.?.value.group_index;
-            } else {
-                break :blk screen.groups.first.?.data;
-            }
-        } else {
+        // TODO: remove ???
+        // var first_window = screen.windows.first;
+        // if (first_window != null) {
+        //     var win_info = windows.get(first_window.?.data);
+        //     if (win_info != null) {
+        //         break :blk win_info.?.value.group_index;
+        //     } else {
+        //         break :blk screen.groups.first.?.data;
+        //     }
+        // } else {
             break :blk screen.groups.first.?.data;
-        }
+        // }
     };
     warn("index: {}", group_index);
 
@@ -1163,7 +1199,7 @@ fn addWindow(dpy: ?*xlib.Display, win: xlib.Window, win_attr: xlib.XWindowAttrib
     var group_win_node = try group.toSlice()[group_index].windows.createNode(win, allocator);
     group.toSlice()[group_index].windows.prepend(group_win_node);
 
-    _ = xlib.XMapWindow(dpy, win);
+    // _ = xlib.XMapWindow(dpy, win);
 }
 
 
@@ -1214,5 +1250,21 @@ fn debugGroups(groups: ArrayList(Group)) void {
             warn(" {}", win.?.data);
         }
         warn("\n");
+    }
+}
+
+
+
+
+fn updateFocus(dpy: ?*xlib.Display, old_node: ?*LinkedList(xlib.Window).Node, new_node: ?*LinkedList(xlib.Window).Node, default: xlib.XColor, active: xlib.XColor) void {
+
+    if (new_node) |new_win| {
+        if (old_node) |old_win| {
+            _ = xlib.XSetWindowBorder(dpy, old_win.data, default.pixel);
+        }
+
+        _ = xlib.XSetWindowBorder(dpy, new_win.data, active.pixel);
+        _ = xlib.XSetInputFocus(dpy, new_win.data, xlib.RevertToParent, CurrentTime);
+        _ = xlib.XRaiseWindow(dpy, new_win.data);
     }
 }

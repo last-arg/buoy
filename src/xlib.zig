@@ -1369,7 +1369,7 @@ pub extern fn XForceScreenSaver(arg0: ?*Display, arg1: c_int) c_int;
 // pub extern fn XFree(arg0: ?*c_void) c_int;
 pub extern fn XFree(arg0: ?*c_void) c_int;
 pub extern fn XFreeColormap(arg0: ?*Display, arg1: Colormap) c_int;
-pub extern fn XFreeColors(arg0: ?*Display, arg1: Colormap, arg2: ?[*]c_ulong, arg3: c_int, arg4: c_ulong) c_int;
+pub extern fn XFreeColors(arg0: ?*Display, arg1: Colormap, arg2: ?*c_ulong, arg3: c_int, arg4: c_ulong) c_int;
 pub extern fn XFreeCursor(arg0: ?*Display, arg1: Cursor) c_int;
 pub extern fn XFreeExtensionList(arg0: ?[*](?[*]u8)) c_int;
 pub extern fn XFreeFont(arg0: ?*Display, arg1: ?[*]XFontStruct) c_int;
