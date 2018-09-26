@@ -675,12 +675,13 @@ pub fn main() !void {
                         // More accurate would be to say that active screen
                         // would have top priority over mouse active screen
                         var active_mouse_screen = getActiveMouseScreen(screens);
-                        var screen_group_node = active_mouse_screen.groups.first;
+                        var active_screen_group_node = active_mouse_screen.groups.first;
                         var old_active_window = active_mouse_screen.windows.first;
 
+                        // if (active_mouse_screen.groups.len == 1) continue;
 
                         // TODO: @GroupKeys
-                        for (group_cstrings) |c_str, i| {
+                        keys_blk: for (group_cstrings) |c_str, i| {
                             if (ev.xkey.keycode == xlib.XKeysymToKeycode(dpy, xlib.XStringToKeysym(c_str))) {
                                 // TODO: check selected group status
                                 // Based on status group can be:
@@ -688,6 +689,9 @@ pub fn main() !void {
                                 // - hidden/remove from screen/monitor
                                 // - displayed
                                 warn("group status: {}\n", i);
+
+                                var group_screen: Screen = undefined;
+                                var new_node: ?*LinkedList(u8).Node = null;
 
                                 var win = blk: {
                                     if (active_mouse_screen.windows.first != null) {
@@ -697,16 +701,37 @@ pub fn main() !void {
                                 };
 
 
-                                if (active_mouse_screen.groups.len > 1 and
+                                // Break for loop if group is the only group in one of
+                                // the screens.
+                                // If screen group lenght is more than 1, save the
+                                // screen group was found on.
+                                var screen_node = screens.first;
+                                screen_blk: while (screen_node != null) : (screen_node = screen_node.?.next) {
+                                    if (screen_node.?.data.groups.first.?.data == i and screen_node.?.data.groups.len == 1) break :keys_blk;
+
+                                    var screen_group_node = screen_node.?.data.groups.first;
+                                    while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
+                                        warn("check group exists\n");
+                                        if (screen_group_node.?.data == i) {
+                                            group_screen = screen_node.?.data;
+                                            new_node = screen_group_node.?;
+                                            screen_node.?.data.groups.remove(screen_group_node.?);
+                                            break :screen_blk;
+                                        }
+                                    }
+                                }
+
+
+                                // TODO: remove len check ???
+                                if (active_mouse_screen.groups.len >= 1 and
                                     ((win != null and win.?.value.group_index == i) or
-                                     (win == null and active_mouse_screen.groups.first.?.data == i))) {
+                                     (win == null and active_screen_group_node.?.data == i))) {
 
 warn("-----HIDE WINDOWS----\n");
                                     // Remove group from Screen
-                                    while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
-                                        if (screen_group_node.?.data == i) {
-                                            active_mouse_screen.groups.remove(screen_group_node.?);
-                                            active_mouse_screen.groups.destroyNode(screen_group_node.?, allocator);
+                                    while (active_screen_group_node != null) : (active_screen_group_node = active_screen_group_node.?.next) {
+                                        if (active_screen_group_node.?.data == i) {
+                                            group_screen.groups.destroyNode(active_screen_group_node.?, allocator);
                                             break;
                                         }
                                     }
@@ -726,16 +751,6 @@ warn("-----HIDE WINDOWS----\n");
                                 } else {
                                     warn("-----RAISE WINDOWS----\n");
 
-                                    // TODO: check if other Screen groups have group
-                                    var new_node: ?*LinkedList(u8).Node = null;
-                                    while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
-                                        if (screen_group_node.?.data == i) {
-                                            new_node = screen_group_node.?;
-                                            active_mouse_screen.groups.remove(screen_group_node.?);
-                                            break;
-                                        }
-                                    }
-
                                     if (new_node == null) {
                                         new_node = try active_mouse_screen.groups.createNode(@intCast(u8, i), allocator);
 
@@ -750,9 +765,33 @@ warn("-----HIDE WINDOWS----\n");
                                         }
                                     } else {
                                         warn("old node \n");
+
                                         var group_win_node = groups.at(i).windows.last;
+
                                         while (group_win_node != null) : (group_win_node = group_win_node.?.prev) {
                                             warn("raise old: {}\n", group_win_node.?.data);
+
+                                            // Continue
+                                            // TODO: test and update win's attrs
+                                            // - Set windows' new screen_index and
+                                            // group_index
+                                            if (active_mouse_screen.index != group_screen.index) {
+                                                // get width ratio
+                                                // get height ratio
+                                                _ = xlib.XGetWindowAttributes(dpy, group_win_node.?.data, &attr);
+                                                var new_width = attr.width * @divFloor(active_mouse_screen.width, group_screen.width);
+                                                var new_height = attr.height * @divFloor(active_mouse_screen.height, group_screen.height);
+                                                var new_x = attr.x - group_screen.x;
+                                                var new_y = attr.y - group_screen.y;
+
+                                                warn("window new attrs: {}x{} {}x{}\n", attr.x, attr.y, attr.width, attr.height);
+                                                warn("window new attrs: {}x{} {}x{}\n", new_x, new_y, new_width, new_height);
+                                                _ = xlib.XMoveResizeWindow(dpy, group_win_node.?.data,
+                                                                           new_x, new_y,
+                                                                           @intCast(c_uint, new_width),
+                                                                           @intCast(c_uint, new_height));
+                                            }
+
                                             _ = xlib.XRaiseWindow(dpy, group_win_node.?.data);
                                             // TODO: Make it more efficient.
                                             // Try to make it into one loop
