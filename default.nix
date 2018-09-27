@@ -7,8 +7,8 @@ with import <nixpkgs> {}; {
       xorg.libX11
       xorg.libXrandr
       xorg.xrandr
-      xorg.randrproto
-      autorandr
+      # xorg.randrproto
+      # autorandr
       xorg.libXinerama
     ];
     # NOTE: There is also a config file called '.fakexinerama' in
