@@ -6,8 +6,15 @@ const BufMap = std.BufMap;
 pub fn build(b: *Builder) void {
 
     const mode = b.standardReleaseOptions();
+    b.addCIncludePath("/nix/store/hy2kzwsn2q5qa5sdbq95vx9dp9cs26q3-xcb-util-0.4.0-dev/include");
 
     const exe = b.addExecutable("buoy", "src/main.zig");
+
+    exe.addCompileFlags([][]const u8 {
+        "-std=c99",
+    //     "-nostdlib",
+    });
+
 
     exe.setBuildMode(mode);
     exe.linkSystemLibrary("c");
@@ -18,13 +25,15 @@ pub fn build(b: *Builder) void {
     // Need support for struct (and union) return values
     // https://github.com/ziglang/zig/issues/1481
     //
-    // exe.linkSystemLibrary("xcb");
+    exe.linkSystemLibrary("xcb");
+    // exe.linkSystemLibrary("xcb-util");
+    exe.linkSystemLibrary("xcb-keysyms");
 
+    // exe.addSourceFile("wrappers/xcb.c");
 
-    // exe.addCompileFlags([][]const u8 {
-    //     "-std=c99",
-    //     "-nostdlib",
-    // });
+    const c_obj = b.addCObject("xcb-wrapper.c", "xcb-wrapper.c");
+    exe.addObject(c_obj);
+
 
     b.default_step.dependOn(&exe.step);
     b.installArtifact(exe);

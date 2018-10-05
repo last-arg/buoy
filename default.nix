@@ -9,7 +9,10 @@ with import <nixpkgs> {}; {
       xorg.xrandr
       # xorg.randrproto
       # autorandr
-      xorg.libXinerama
+      # xorg.libXinerama
+      xorg.libxcb
+      xorg.xcbutil
+      xorg.xcbutilkeysyms
     ];
     # NOTE: There is also a config file called '.fakexinerama' in
     # user's home folder. The file defines screen areas
