@@ -1,3 +1,7 @@
+// TODO: Try to remove/replace xlib functions
+// XStringToKeysym
+// TODO: Monitor/Screen is added/removed
+
 // use "./debug.zig".; // TODO: move debug functions to its own file
 const std = @import("std");
 const fmt = std.fmt;
@@ -21,10 +25,11 @@ const xatom = @cImport({
 });
 const xrandr = @import("Xrandr.zig");
 
-// NOTE: At the bottom of the file there are manually imported external functions
+// NOTE: At the bottom of the file there are manually imported external wrapper functions
 use @cImport({
     @cInclude("xcb/xcb.h");
     @cInclude("xcb/xcb_keysyms.h");
+    @cInclude("xcb/randr.h");
 });
 
 
@@ -37,12 +42,14 @@ const _XCB_GRAB_MODE_ASYNC = 1;
 const _XCB_MOD_MASK_1 = 8;
 const XCB_NONE = 0;
 const XCB_NO_SYMBOL = 0;
+const _XCB_EVENT_MASK_ENTER_WINDOW = 16;
 const _XCB_EVENT_MASK_POINTER_MOTION = 64;
 const _XCB_EVENT_MASK_EXPOSURE = 32768;
 const _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY = 524288;
 const _XCB_CW_BACK_PIXEL = 2;
 const _XCB_CW_EVENT_MASK = 2048;
 const _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT = 1048576;
+const _XCB_CW_BORDER_PIXMAP = 4;
 
 const _XCB_CONFIG_WINDOW_X = 1;
 const _XCB_CONFIG_WINDOW_Y = 2;
@@ -52,15 +59,17 @@ const _XCB_CONFIG_WINDOW_BORDER_WIDTH = 16;
 const _XCB_CONFIG_WINDOW_SIBLING = 32;
 const _XCB_CONFIG_WINDOW_STACK_MODE = 64;
 const _XCB_GRAB_ANY = 0;
+const _XCB_GC_FOREGROUND = 4;
+const _XCB_CW_BORDER_PIXEL = 8;
 
 
 const Screen = struct {
-    index: c_int, // TODO: or use somekind of id ???
+    id: u32, // TODO: or use somekind of id ???
     has_mouse: bool,
-    x: c_int,
-    y: c_int,
-    width: c_int,
-    height: c_int,
+    x: i16,
+    y: i16,
+    width: u16,
+    height: u16,
     groups: LinkedList(u8),
     windows: LinkedList(xlib.Window),
 };
@@ -75,7 +84,7 @@ const Group = struct {
 
 const Window = struct {
     id: xlib.Window,
-    screen_index: c_int, // TODO: Change to screen/monitor id/name/index ???
+    screen_id: u32, // TODO: Change to screen/monitor id/name/index ???
     group_index: u8,
     // x: c_int,
     // y: c_int,
@@ -90,7 +99,7 @@ const BORDER_WIDTH = 10;
 var window_min_width: i32 = 100; // NOTE: without border
 var window_min_height: i32 = 100; // NOTE: without border
 var number_of_groups: u8 = 10;
-var default_color: xlib.XColor = undefined;
+// var default_color: u32 = undefined;
 var active_color: xlib.XColor = undefined;
 
 var group_cstrings: []const [*]const u8 = undefined;
@@ -98,41 +107,169 @@ var group_cstrings: []const [*]const u8 = undefined;
 pub fn main() !void {
     // TODO: Change/Add different allocator(s)
     const allocator = std.heap.c_allocator;
+    const c_allocator = std.heap.c_allocator;
 
     var dpy = xcb_connect(null, null);
+
     if (xcb_connection_has_error(dpy) > 0) return error.FailedToOpenDisplay;
 
     var return_screen: xcb_screen_iterator_t = undefined;
-    var screen = _xcb_setup_roots_iterator(xcb_get_setup(dpy), &return_screen);
+    _ = _xcb_setup_roots_iterator(xcb_get_setup(dpy), &return_screen);
     warn("{}\n", return_screen.data.?[0]);
-    // warn("{}\n", screen.data.?[0]);
 
-
-    var root = return_screen.data.?[0].root;
+    var screen_data = return_screen.data.?[0];
+    var screen_root = return_screen.data.?[0].root;
 
     var return_cookie: xcb_void_cookie_t = undefined;
 
     var value_list = []c_uint{
         _XCB_EVENT_MASK_POINTER_MOTION
         | _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT
-        | _XCB_EVENT_MASK_EXPOSURE
-        | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY,
+        // | _XCB_EVENT_MASK_EXPOSURE
+        // | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY,
     };
-    _ = _xcb_change_window_attributes(dpy, root, _XCB_CW_EVENT_MASK, @ptrCast(?*const c_void, &value_list), &return_cookie);
+    _ = _xcb_change_window_attributes(dpy, screen_root, _XCB_CW_EVENT_MASK, @ptrCast(?*const c_void, &value_list), &return_cookie);
 
-    // _ = grab_button(dpy, 0, root, _XCB_EVENT_MASK_BUTTON_PRESS|_XCB_EVENT_MASK_BUTTON_RELEASE, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, root, XCB_NONE, 1, _XCB_MOD_MASK_1, &return_cookie);
+    // _ = grab_button(dpy, 0, screen_root, _XCB_EVENT_MASK_BUTTON_PRESS|_XCB_EVENT_MASK_BUTTON_RELEASE, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, screen_root, XCB_NONE, 1, _XCB_MOD_MASK_1, &return_cookie);
 
+    // Set keyboard and mouse events
     {
         var key_symbols = xcb_key_symbols_alloc(dpy);
-    // warn("{}\n", xcb_key_symbols_get_keysym(key_symbols, 84, 0));
-    // t -> 84
-        // xcb_key_symbols_get_keycode();
         var t_keysym = xlib.XStringToKeysym(c"t");
         var t_keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, t_keysym)).?[0];
-        _ = _xcb_grab_key(dpy, 1, root, _XCB_MOD_MASK_1, t_keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_cookie);
+        _ = _xcb_grab_key(dpy, 1, screen_root, _XCB_MOD_MASK_1, t_keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_cookie);
 
         xcb_key_symbols_free(key_symbols);
     }
+
+    // Set colors
+    var return_grey_color_cookie: xcb_alloc_named_color_cookie_t = undefined;
+    var return_blue_color_cookie: xcb_alloc_named_color_cookie_t = undefined;
+    var default_color_cookie = _xcb_alloc_named_color(dpy, screen_data.default_colormap, 4, c"grey", &return_grey_color_cookie);
+
+    var active_color_cookie = _xcb_alloc_named_color(dpy, screen_data.default_colormap, 4, c"blue", &return_blue_color_cookie);
+    var default_color_reply = xcb_alloc_named_color_reply(dpy, return_grey_color_cookie, null);
+    var active_color_reply = xcb_alloc_named_color_reply(dpy, return_blue_color_cookie, null);
+
+    var default_border_color = default_color_reply.?[0].pixel;
+    var active_border_color = active_color_reply.?[0].pixel;
+
+    
+    // Setup: Screens, Groups, Windows
+
+    // NOTE: Function 'XRRGetMonitors/xcb_randr_get_monitors' requires minimum RandR version 1.5
+    // This also detects 'monitors' in Xephyr test environment
+    //
+    // NOTE: If want to support older xrandr versions than 1.5 have to
+    // use different functions: XRRGetScreenResources(Current),
+    // XRRGetOutputInfo, XRRGetCrtcInfo. But these won't work in test
+    // environment where Xephyr tries to emulate multi monitor setup.
+    var return_monitor_cookie: xcb_randr_get_monitors_cookie_t = undefined;
+    _ = _xcb_randr_get_monitors(dpy, screen_root, 1, &return_monitor_cookie);
+    var monitors = xcb_randr_get_monitors_reply(dpy, return_monitor_cookie, null);
+    var number_of_monitors = monitors.?[0].nMonitors;
+
+    // Create Groups
+    var groups = ArrayList(Group).init(allocator);
+    defer groups.deinit();
+    // Make sure there are atleast as many groups as there are monitors
+    if (number_of_groups < @intCast(u8, number_of_monitors)) number_of_groups = @intCast(u8, number_of_monitors);
+    try groups.resize(number_of_groups);
+    {
+        var i: u8 = 0;
+        while (i < number_of_groups) : (i += 1) {
+            var group = Group {
+                .index = i,
+                .windows = LinkedList(xlib.Window).init(),
+            };
+            groups.set(i, group);
+        }
+    }
+
+    // Create Screens
+    // TODO: Implement defer
+    var screens = LinkedList(Screen).init();
+    // TODO: implement fallback (else branch)
+    if (number_of_monitors > 0) {
+        // Pointer/Mouse location
+        var return_pointer: xcb_query_pointer_cookie_t = undefined;
+        _ = _xcb_query_pointer(dpy, screen_root, &return_pointer);
+        var pointer_reply = xcb_query_pointer_reply(dpy, return_pointer, null);
+        var pointer = pointer_reply.?[0];
+        warn("{}\n", pointer);
+
+        var j: u8 = 0;
+        var return_monitors_iter: xcb_randr_monitor_info_iterator_t = undefined;
+        _ = _xcb_randr_get_monitors_monitors_iterator(monitors, &return_monitors_iter);
+        while (return_monitors_iter.rem != 0) : ({
+            _ = xcb_randr_monitor_info_next(@ptrCast(?[*]struct_xcb_randr_monitor_info_iterator_t ,&return_monitors_iter));
+            j += 1;
+        }) {
+            var monitor = return_monitors_iter.data.?[0];
+
+            // TODO: what every result is false
+            // Solution: warp pointer to a screen and set it true.
+            // This has to take place after this while loop
+            var has_mouse = (pointer.root_x >= monitor.x
+                and pointer.root_x <= (monitor.x + @intCast(i16, monitor.width))
+                and pointer.root_y >= monitor.y
+                and pointer.root_y <= (monitor.y + @intCast(i16, monitor.height)));
+
+            warn("{}\n", has_mouse);
+            var screen = Screen {
+                // NOTE: Xephyr test environment doesn't have primary monitor
+                .has_mouse = has_mouse,
+                .id = monitor.name,
+                .groups = LinkedList(u8).init(),
+                .x = monitor.x,
+                .y = monitor.y,
+                .width = monitor.width,
+                .height = monitor.height,
+                .windows = std.LinkedList(xlib.Window).init(),
+            };
+            
+            var group_node = try screen.groups.createNode(j, allocator);
+            screen.groups.prepend(group_node);
+
+            var node_ptr = try screens.createNode(screen, allocator);
+            screens.append(node_ptr);
+        }
+    }
+
+    std.c.free(@ptrCast(*c_void, &monitors.?[0]));
+
+    // Add existing windows
+    var windows = WindowsHashMap.init(allocator);
+    defer windows.deinit();
+
+    {
+        var return_tree: xcb_query_tree_cookie_t = undefined;
+        _ = _xcb_query_tree(dpy, screen_root, &return_tree);
+        var tree_reply = xcb_query_tree_reply(dpy, return_tree, null);
+        var children = xcb_query_tree_children(tree_reply);
+        var children_count = tree_reply.?[0].children_len;
+
+        var event_mask: u32 = _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK;
+        var values = []u32{default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW};
+        var i: u16 = 0;
+        while (i < children_count) : (i+=1) {
+            warn("{}\n", children.?[i]);
+            var win = children.?[i];
+            var screen = &screens.first.?.data;
+            var group_index = screen.groups.first.?.data;
+            var group = &groups.toSlice()[group_index];
+
+            _ = _xcb_change_window_attributes(dpy, win, event_mask, @ptrCast(?*const c_void, &values), &return_cookie);
+
+            _ = addWindow(allocator, win, screen, group, &windows);
+
+            setWindowEvents(dpy, win, screen_root);
+        }
+    }
+
+    debugScreens(screens, windows);
+    debugWindows(windows);
+    debugGroups(groups);
 
     _ = xcb_flush(dpy);
 
@@ -145,52 +282,48 @@ pub fn main() !void {
             XCB_CONFIGURE_REQUEST => {
                 warn("xcb: configure request\n");
                 var e = @ptrCast(*xcb_configure_request_event_t, &ev);
-                // var win_values = undefined;
                 var i: u8 = 0;
                 var win_mask: u16 = 0;
                 var win_values: [7]u32 = undefined;
-warn("{}\n", e);
+// warn("{}\n", e);
 
-warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_X);
+// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_X);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_X) > 0) {
                     win_mask = win_mask | _XCB_CONFIG_WINDOW_X;
                     win_values[i] = 10;
                     i += 1;
                 }
-warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_Y);
+// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_Y);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_Y) > 0) {
                     win_mask = win_mask | _XCB_CONFIG_WINDOW_Y;
                     win_values[i] = 10;
                     i += 1;
                 }
-warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_WIDTH);
+// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_WIDTH);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_WIDTH) > 0) {
                     win_mask = win_mask | _XCB_CONFIG_WINDOW_WIDTH;
                     win_values[i] = e.width;
                     i += 1;
                 }
-warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_HEIGHT);
+// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_HEIGHT);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_HEIGHT) > 0) {
                     win_mask = win_mask | _XCB_CONFIG_WINDOW_HEIGHT;
                     win_values[i] = e.height;
                     i += 1;
                 }
 
-// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_BORDER_WIDTH);
-//                 if ((e.value_mask & _XCB_CONFIG_WINDOW_BORDER_WIDTH) > 0) {
-//                     win_mask = win_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
-//                     win_values[i] = BORDER_WIDTH;
-//                     i += 1;
-//                 }
+                win_mask = win_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
+                win_values[i] = BORDER_WIDTH;
+                i += 1;
 
-warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_SIBLING);
+// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_SIBLING);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_SIBLING) > 0) {
                     win_mask = win_mask | _XCB_CONFIG_WINDOW_SIBLING;
                     win_values[i] = e.sibling;
                     i += 1;
                 }
 
-warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_STACK_MODE);
+// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_STACK_MODE);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_STACK_MODE) > 0) {
                     win_mask = win_mask | _XCB_CONFIG_WINDOW_STACK_MODE;
                     win_values[i] = e.stack_mode;
@@ -199,6 +332,12 @@ warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_STACK_MODE);
 
                 var return_pointer: xcb_void_cookie_t = undefined;
                 _ = _xcb_configure_window(dpy, e.window, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
+
+
+                // TODO: Move it under 'map request' event ???
+                var values = []u32{default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW};
+                _ = _xcb_change_window_attributes(dpy, e.window, _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK, @ptrCast(?*const c_void, &values), &return_cookie);
+
                 _ = xcb_flush(dpy);
             },
             XCB_CONFIGURE_NOTIFY => {
@@ -213,10 +352,33 @@ warn("{}\n", e);
                 _ = _xcb_map_window(dpy, e.window, &return_void_pointer);
 
 
+                var screen = getActiveMouseScreen(screens);
+                var group_index = screen.groups.first.?.data;
+                var group = &groups.toSlice()[group_index];
+                _ = addWindow(allocator, e.window, screen, group, &windows);
 
-                _ = grab_button(dpy, 1, e.window, _XCB_EVENT_MASK_BUTTON_PRESS|_XCB_EVENT_MASK_BUTTON_RELEASE, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, root, XCB_NONE, 1, _XCB_MOD_MASK_1, &return_void_pointer);
+                setWindowEvents(dpy, e.window, screen_root);
+
+                // TODO: set window location and dimensions
+                var return_geo: xcb_get_geometry_cookie_t = undefined;
+                _ = _xcb_get_geometry(dpy, e.window, &return_geo);
+                var geo = xcb_get_geometry_reply(dpy, return_geo, null);
+                var active_screen = getActiveMouseScreen(screens);
+                warn("{}\n", geo.?[0]);
+                var new_geo = getWindowGeometryInside(geo.?[0], active_screen);
+                warn("--------------\n{}\n", new_geo);
+
+                var win_mask: u16 = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y | _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
+                var win_values = []i32{new_geo.x, new_geo.y, new_geo.width, new_geo.height};
+
+                var return_pointer: xcb_void_cookie_t = undefined;
+                _ = _xcb_configure_window(dpy, e.window, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
 
                 _ = xcb_flush(dpy);
+
+debugScreens(screens, windows);
+debugWindows(windows);
+debugGroups(groups);
             },
             XCB_MAP_NOTIFY => {
                 warn("xcb: map notify\n");
@@ -229,6 +391,11 @@ warn("{}\n", e);
             },
             XCB_BUTTON_PRESS => {
                 warn("xcb: button press\n");
+                var e = @ptrCast(*xcb_button_press_event_t, &ev);
+                warn("{}\n", e);
+
+
+                var is_grabbed = true;
 
                 _ = xcb_flush(dpy);
             },
@@ -237,13 +404,18 @@ warn("{}\n", e);
                 _ = xcb_flush(dpy);
             },
             XCB_MOTION_NOTIFY => {
-                warn("xcb: motion notify\n");
+                // warn("xcb: motion notify\n");
+                var e = @ptrCast(*xcb_motion_notify_event_t, &ev);
+                // warn("{}\n", e);
+
+                var current_mouse_screen = getActiveMouseScreen(screens);
+                var has_screen_changed = hasActiveScreenChanged(e.root_x, e.root_y, screens, current_mouse_screen);
+
                 _ = xcb_flush(dpy);
             },
             XCB_KEY_PRESS => {
                 warn("xcb: key press\n");
                 var e = @ptrCast(*xcb_key_press_event_t, &ev);
-warn("{}\n", ev);
 warn("{}\n", e);
 
                 var key_symbols = xcb_key_symbols_alloc(dpy);
@@ -263,6 +435,20 @@ warn("{}\n", e);
             },
             XCB_KEY_RELEASE => {
                 warn("xcb: key release\n");
+                _ = xcb_flush(dpy);
+            },
+            XCB_ENTER_NOTIFY => {
+                warn("xcb: enter notify\n");
+                var e = @ptrCast(*xcb_enter_notify_event_t, &ev);
+warn("{}\n", e);
+
+                var win = windows.get(e.event);
+                var mouse_screen = getActiveMouseScreen(screens);
+
+
+                var win_screen = getScreen(win.?.value.screen_id, screens);
+                warn("{}\n", win_screen.id);
+
                 _ = xcb_flush(dpy);
             },
             else => {
@@ -422,21 +608,20 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
     };
 }
 
-
-fn setWindowInsideScreen(dpy: ?*xlib.Display, window: xlib.Window, w_attr: xlib.XWindowAttributes, screen: *Screen) void {
-    var screen_width = screen.width;
-    var screen_height = screen.height;
-    var x = w_attr.x - screen.x;
-    var y = w_attr.y - screen.y;
-    var width = w_attr.width;
-    var height = w_attr.height;        
+fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) WindowGeometry {
+    var screen_width:i32 = screen.width;
+    var screen_height:i32 = screen.height;
+    var x:i32 = w_attr.x - screen.x;
+    var y:i32 = w_attr.y - screen.y;
+    var width:i32 = w_attr.width;
+    var height:i32 = w_attr.height;        
 
 
     // Width and x coordinate
     var win_total_width = width + 2 * BORDER_WIDTH;
 
     if (win_total_width >= screen_width) {
-        width = screen_width - 2 * BORDER_WIDTH - 2;
+        width = screen_width - 2;
     }
 
     win_total_width = width + 2 * BORDER_WIDTH;
@@ -445,14 +630,14 @@ fn setWindowInsideScreen(dpy: ?*xlib.Display, window: xlib.Window, w_attr: xlib.
         x = x - (x + win_total_width - screen_width) - 1;
     }
 
-    x = std.math.max(1, x);
+    x = std.math.max(1, x) + screen.x;
 
 
     // Height and y coordinate
     var win_total_height = height + 2 * BORDER_WIDTH;
 
     if (win_total_height >= screen_height) {
-        height = screen_height - 2 * BORDER_WIDTH - 2;
+        height = screen_height - 2;
     }
 
     win_total_height = height + 2 * BORDER_WIDTH;
@@ -461,9 +646,14 @@ fn setWindowInsideScreen(dpy: ?*xlib.Display, window: xlib.Window, w_attr: xlib.
         y = y - (y + win_total_height - screen_height) - 1;
     }
 
-    y = std.math.max(1, y);
+    y = std.math.max(1, y) + screen.y;
 
-    _ = xlib.XMoveResizeWindow(dpy, window, x + screen.x, y + screen.y, @intCast(c_uint, width), @intCast(c_uint, height));
+    return WindowGeometry {
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+    };
 }
 
 
@@ -535,12 +725,12 @@ fn checkActiveScreen(x: c_int, y: c_int, screens: LinkedList(Screen), active_scr
 
 
 
-fn hasActiveScreenChanged(x: c_int, y: c_int, screens: LinkedList(Screen), active_screen: *Screen) bool {
+fn hasActiveScreenChanged(x: i16, y: i16, screens: LinkedList(Screen), active_screen: *Screen) bool {
     var screen = screens.first;
     while (screen != null) : (screen = screen.?.next) {
-        if (screen.?.data.index == active_screen.index) continue;
+        if (screen.?.data.id == active_screen.id) continue;
         if (isPointerInScreen(screen.?.data, x, y)) { 
-            warn("Change screen {}\n", screen.?.data.index);
+            warn("Change screen {}\n", screen.?.data.id);
             active_screen.has_mouse = false;
             screen.?.data.has_mouse = true;
             return true;
@@ -551,9 +741,9 @@ fn hasActiveScreenChanged(x: c_int, y: c_int, screens: LinkedList(Screen), activ
 }
 
 
-fn isPointerInScreen(screen: Screen, x: c_int , y: c_int) bool {
-    var screen_x_right = screen.x + screen.width;
-    var screen_y_right = screen.y + screen.height;
+fn isPointerInScreen(screen: Screen, x: i16 , y: i16) bool {
+    var screen_x_right = screen.x + @intCast(i32, screen.width);
+    var screen_y_right = screen.y + @intCast(i32, screen.height);
 
     return (x >= screen.x)  and (x <= screen_x_right) 
             and (y >= screen.y) and (y <= screen_y_right);
@@ -565,7 +755,7 @@ fn debugScreens(screens: LinkedList(Screen), windows: WindowsHashMap) void {
     warn("\n----Screens----\n");
     while (item != null) : (item = item.?.next) {
         var screen = item.?.data;
-        warn("Screen |> index: {}", screen.index);
+        warn("Screen |> id: {}", screen.id);
         warn(" | groups:");
         debugGroupsArray(screen.groups);
         warn(" | windows:");
@@ -608,59 +798,24 @@ fn debugScreenWindows(ll: LinkedList(Screen)) void {
 }
 
 
-fn addWindow(dpy: ?*xlib.Display, win: xlib.Window, win_attr: xlib.XWindowAttributes, border_width: c_uint, border_color: xlib.XColor, screen: *Screen, allocator: *Allocator, windows: *WindowsHashMap, group: *ArrayList(Group)) !void {
-    _ = xlib.XSetWindowBorder(dpy, win, border_color.pixel);
-    _ = xlib.XSetWindowBorderWidth(dpy, win, border_width);
-
-    // // Spawn location is middle of screen
-    // var x = @divExact(active_screen.width, 2) - @divExact(attr.width, 2) - BORDER_WIDTH + active_screen.x;
-    // var y = @divExact(active_screen.height, 2) - @divExact(attr.height, 2) - BORDER_WIDTH + active_screen.y;
-
-
-    // // TODO: Spawn window where ever I want
-    // // Might have to pass x and y as parameters
-    setWindowInsideScreen(dpy, win, win_attr, screen);
-
-
-    setWindowKeyAndButtonEvents(dpy, win);
-    // _ = xlib.XRaiseWindow(dpy, win);
-
-    var group_index = blk: {
-
-        // TODO: remove ???
-        // var first_window = screen.windows.first;
-        // if (first_window != null) {
-        //     var win_info = windows.get(first_window.?.data);
-        //     if (win_info != null) {
-        //         break :blk win_info.?.value.group_index;
-        //     } else {
-        //         break :blk screen.groups.first.?.data;
-        //     }
-        // } else {
-            break :blk screen.groups.first.?.data;
-        // }
-    };
-    warn("index: {}", group_index);
-
+fn addWindow(allocator: *Allocator, win: xcb_window_t, screen: *Screen, group: *Group, windows: *WindowsHashMap) !void {
     var new_window = Window {
         .id = win,
-        .screen_index = screen.index,
-        .group_index = group_index,
+        .screen_id = screen.id,
+        .group_index = group.index,
     };
 
     // Add to windows hash map
     // TODO: fn putOrGet ???
     _ = try windows.put(win, new_window);
-    var kv = windows.get(win);
+    // var kv = windows.get(win);
 
-    // Add to screen's linked list windows attribute
-    // NOTE: screen.windows and group.windows share nodes
+    // Add into screen's window linked list
     var win_node = try screen.windows.createNode(win, allocator);
     screen.windows.prepend(win_node);
-    var group_win_node = try group.toSlice()[group_index].windows.createNode(win, allocator);
-    group.toSlice()[group_index].windows.prepend(group_win_node);
-
-    // _ = xlib.XMapWindow(dpy, win);
+    // Add into groups' window linked list
+    var group_win_node = try group.windows.createNode(win, allocator);
+    group.windows.prepend(group_win_node);
 }
 
 
@@ -675,16 +830,16 @@ fn debugWindows(windows: WindowsHashMap) void {
     warn("\n----Windows----\n");
     while (item != null) : (item = iter.next()) {
         warn("Window |> ");
-        warn("id: {} | screen: {} | group: {}\n", item.?.value.id, item.?.value.screen_index, item.?.value.group_index);
+        warn("id: {} | screen: {} | group: {}\n", item.?.value.id, item.?.value.screen_id, item.?.value.group_index);
    }
 }
 
 
 
-fn getScreen(screen_index: c_int, screens: LinkedList(Screen)) *Screen {
+fn getScreen(screen_id: u32, screens: LinkedList(Screen)) *Screen {
     var window_screen_node = screens.first;
     while (window_screen_node != null) : (window_screen_node = window_screen_node.?.next) {
-        if (window_screen_node.?.data.index == screen_index) {
+        if (window_screen_node.?.data.id == screen_id) {
             break;
         }
     }
@@ -732,6 +887,14 @@ fn updateFocus(dpy: ?*xlib.Display, old_node: ?*LinkedList(xlib.Window).Node, ne
 
 
 
+fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, screen_root: u32) void {
+    var return_void_pointer: xcb_void_cookie_t = undefined;
+
+    _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS|_XCB_EVENT_MASK_BUTTON_RELEASE, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, screen_root, XCB_NONE, 1, _XCB_MOD_MASK_1, &return_void_pointer);
+
+}
+
+
 
 
 
@@ -746,3 +909,30 @@ pub extern fn _xcb_change_window_attributes(c: ?*xcb_connection_t, window: xcb_w
 pub extern fn _xcb_configure_window(c: ?*xcb_connection_t, window: xcb_window_t, value_mask: u16, value_list: ?*const c_void, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
 pub extern fn _xcb_map_window(c: ?*xcb_connection_t, window: xcb_window_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_free_pixmap(c: ?*xcb_connection_t, pixmap: xcb_pixmap_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_create_pixmap(c: ?*xcb_connection_t, depth: u8, pid: xcb_pixmap_t, drawable: xcb_drawable_t, width: u16, height: u16, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_create_gc(c: ?*xcb_connection_t, cid: xcb_gcontext_t, drawable: xcb_drawable_t, value_mask: u32, value_list: ?*const c_void, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_change_gc(c: ?*xcb_connection_t, gc: xcb_gcontext_t, value_mask: u32, value_list: ?*const c_void, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_alloc_named_color(c: ?*xcb_connection_t, cmap: xcb_colormap_t, name_len: u16, name: ?[*]const u8, return_pointer: *xcb_alloc_named_color_cookie_t) *xcb_alloc_named_color_cookie_t;
+
+
+
+
+pub extern fn _xcb_randr_get_monitors(c: ?*xcb_connection_t, window: xcb_window_t, get_active: u8, return_pointer: *xcb_randr_get_monitors_cookie_t) *xcb_randr_get_monitors_cookie_t;
+
+pub extern fn _xcb_randr_get_monitors_monitors_iterator(R: ?[*]const xcb_randr_get_monitors_reply_t, return_pointer: *xcb_randr_monitor_info_iterator_t) *xcb_randr_monitor_info_iterator_t;
+
+pub extern fn _xcb_query_tree(c: ?*xcb_connection_t, window: xcb_window_t, return_pointer: *xcb_query_tree_cookie_t) *xcb_query_tree_cookie_t;
+
+pub extern fn _xcb_query_pointer(c: ?*xcb_connection_t, window: xcb_window_t, return_pointer: *xcb_query_pointer_cookie_t) *xcb_query_pointer_cookie_t;
+
+
+pub extern fn _xcb_get_geometry(c: ?*xcb_connection_t, drawable: xcb_drawable_t, return_pointer: *xcb_get_geometry_cookie_t) *xcb_get_geometry_cookie_t;
+
+
+// pub extern fn _xcb_translate_coordinates(c: ?*xcb_connection_t, src_window: xcb_window_t, dst_window: xcb_window_t, src_x: i16, src_y: i16, return_pointer: *xcb_translate_coordinates_cookie_t) *xcb_translate_coordinates_cookie_t;

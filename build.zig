@@ -28,6 +28,7 @@ pub fn build(b: *Builder) void {
     exe.linkSystemLibrary("xcb");
     // exe.linkSystemLibrary("xcb-util");
     exe.linkSystemLibrary("xcb-keysyms");
+    exe.linkSystemLibrary("xcb-randr");
 
     // exe.addSourceFile("wrappers/xcb.c");
 

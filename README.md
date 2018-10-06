@@ -23,7 +23,7 @@ Run script 'run_test_env'. Only xinerama detects these fake dual screens.
 
 
 Zig translate-c example (in nixos):
-zig translate-c /nix/store/sma8yp1cb1f936j7lr1j244614jd241x-libxcb-1.12-dev/include/xcb/xcb.h $NIX_CFLAGS_COMPILE > ./xcb.zig
+zig translate-c ./translate.h $NIX_CFLAGS_COMPILE > ./translate.zig
 
 
 TODO:
