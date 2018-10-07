@@ -1,8 +1,9 @@
 // TODO: Try to remove/replace xlib functions
 // XStringToKeysym
 // TODO: Monitor/Screen is added/removed
+// TODO: maybe it is possible to combine functions getWindowGeometryInside and inBoundsWindowGeometry
 
-// use "./debug.zig".; // TODO: move debug functions to its own file
+// use @import("debug.zig"); // TODO: move debug functions to its own file
 const std = @import("std");
 const fmt = std.fmt;
 const cstr = std.cstr;
@@ -36,16 +37,25 @@ use @cImport({
 // NOTE: Add underscore to avoid redefinition error
 const _XCB_EVENT_MASK_BUTTON_PRESS = 4;
 const _XCB_EVENT_MASK_BUTTON_RELEASE = 8;
+const _XCB_MOD_MASK_SHIFT = 1;
+const _XCB_MOD_MASK_1 = 8;
 const _XCB_MOD_MASK_2 = 16;
 const _XCB_GRAB_MODE_SYNC = 0;
 const _XCB_GRAB_MODE_ASYNC = 1;
-const _XCB_MOD_MASK_1 = 8;
 const XCB_NONE = 0;
 const XCB_NO_SYMBOL = 0;
 const _XCB_EVENT_MASK_ENTER_WINDOW = 16;
 const _XCB_EVENT_MASK_POINTER_MOTION = 64;
 const _XCB_EVENT_MASK_EXPOSURE = 32768;
+const _XCB_EVENT_MASK_BUTTON_MOTION = 8192;
 const _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY = 524288;
+const _XCB_TIME_CURRENT_TIME = 0;
+
+const _XCB_BUTTON_INDEX_ANY = 0;
+const _XCB_BUTTON_INDEX_1 = 1;
+const _XCB_BUTTON_INDEX_2 = 2;
+const _XCB_BUTTON_INDEX_3 = 3;
+
 const _XCB_CW_BACK_PIXEL = 2;
 const _XCB_CW_EVENT_MASK = 2048;
 const _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT = 1048576;
@@ -94,23 +104,23 @@ const Window = struct {
 
 const WindowsHashMap = HashMap(c_ulong, Window, getWindowHash, comptime hash_map.getAutoEqlFn(c_ulong));
 
-// ------- CONFIG -------
-const BORDER_WIDTH = 10;
-var window_min_width: i32 = 100; // NOTE: without border
-var window_min_height: i32 = 100; // NOTE: without border
-var number_of_groups: u8 = 10;
-// var default_color: u32 = undefined;
-var active_color: xlib.XColor = undefined;
 
-var group_cstrings: []const [*]const u8 = undefined;
+
 
 pub fn main() !void {
+    // ------- CONFIG -------
+    const BORDER_WIDTH: u16 = 10;
+    var window_min_width: u16= 100; // NOTE: without border
+    var window_min_height: u16 = 100; // NOTE: without border
+    var group_count: u8 = 10;
+    var screen_padding: u16 = 2;
+    // var active_color: xlib.XColor = undefined;
+    // var group_cstrings: []const [*]const u8 = undefined;
+
     // TODO: Change/Add different allocator(s)
     const allocator = std.heap.c_allocator;
-    const c_allocator = std.heap.c_allocator;
 
     var dpy = xcb_connect(null, null);
-
     if (xcb_connection_has_error(dpy) > 0) return error.FailedToOpenDisplay;
 
     var return_screen: xcb_screen_iterator_t = undefined;
@@ -123,14 +133,13 @@ pub fn main() !void {
     var return_cookie: xcb_void_cookie_t = undefined;
 
     var value_list = []c_uint{
-        _XCB_EVENT_MASK_POINTER_MOTION
-        | _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT
+        _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT
+        | _XCB_EVENT_MASK_POINTER_MOTION
         // | _XCB_EVENT_MASK_EXPOSURE
         // | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY,
     };
     _ = _xcb_change_window_attributes(dpy, screen_root, _XCB_CW_EVENT_MASK, @ptrCast(?*const c_void, &value_list), &return_cookie);
 
-    // _ = grab_button(dpy, 0, screen_root, _XCB_EVENT_MASK_BUTTON_PRESS|_XCB_EVENT_MASK_BUTTON_RELEASE, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, screen_root, XCB_NONE, 1, _XCB_MOD_MASK_1, &return_cookie);
 
     // Set keyboard and mouse events
     {
@@ -173,11 +182,11 @@ pub fn main() !void {
     var groups = ArrayList(Group).init(allocator);
     defer groups.deinit();
     // Make sure there are atleast as many groups as there are monitors
-    if (number_of_groups < @intCast(u8, number_of_monitors)) number_of_groups = @intCast(u8, number_of_monitors);
-    try groups.resize(number_of_groups);
+    if (group_count < @intCast(u8, number_of_monitors)) group_count = @intCast(u8, number_of_monitors);
+    try groups.resize(group_count);
     {
         var i: u8 = 0;
-        while (i < number_of_groups) : (i += 1) {
+        while (i < group_count) : (i += 1) {
             var group = Group {
                 .index = i,
                 .windows = LinkedList(xlib.Window).init(),
@@ -255,16 +264,22 @@ pub fn main() !void {
         while (i < children_count) : (i+=1) {
             warn("{}\n", children.?[i]);
             var win = children.?[i];
-            var screen = &screens.first.?.data;
-            var group_index = screen.groups.first.?.data;
+            // TODO: find in which screen window is.
+            // Fallback to first or primary screen.
+            var active_screen = &screens.first.?.data;
+            var group_index = active_screen.groups.first.?.data;
             var group = &groups.toSlice()[group_index];
 
             _ = _xcb_change_window_attributes(dpy, win, event_mask, @ptrCast(?*const c_void, &values), &return_cookie);
 
-            _ = addWindow(allocator, win, screen, group, &windows);
-
+            configureWindow(dpy, win, BORDER_WIDTH, default_border_color);
+            resizeAndMoveWindow(dpy, win, active_screen, screen_padding, BORDER_WIDTH);
             setWindowEvents(dpy, win, screen_root);
+            _ = addWindow(allocator, win, active_screen, group, &windows);
+
         }
+
+        // TODO: focus first window
     }
 
     debugScreens(screens, windows);
@@ -275,68 +290,72 @@ pub fn main() !void {
 
     while (true) {
         var ev = xcb_wait_for_event(dpy).?[0];
-
         // warn("{}\n", ev.?[0]);
         var res_type = ev.response_type & ~u8(0x80);
         switch (res_type) {
             XCB_CONFIGURE_REQUEST => {
                 warn("xcb: configure request\n");
                 var e = @ptrCast(*xcb_configure_request_event_t, &ev);
+                warn("{}\n", e);
+
                 var i: u8 = 0;
-                var win_mask: u16 = 0;
-                var win_values: [7]u32 = undefined;
-// warn("{}\n", e);
+                var config_mask: u16 = 0;
+                var config_values: [7]i32 = undefined;
+                var win = e.window;
+                // warn("{}\n", e);
 
-// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_X);
+                // warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_X);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_X) > 0) {
-                    win_mask = win_mask | _XCB_CONFIG_WINDOW_X;
-                    win_values[i] = 10;
+                    config_mask = config_mask | _XCB_CONFIG_WINDOW_X;
+                    config_values[i] = e.x;
                     i += 1;
                 }
-// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_Y);
+                // warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_Y);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_Y) > 0) {
-                    win_mask = win_mask | _XCB_CONFIG_WINDOW_Y;
-                    win_values[i] = 10;
+                    config_mask = config_mask | _XCB_CONFIG_WINDOW_Y;
+                    config_values[i] = e.y;
                     i += 1;
                 }
-// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_WIDTH);
+                // warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_WIDTH);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_WIDTH) > 0) {
-                    win_mask = win_mask | _XCB_CONFIG_WINDOW_WIDTH;
-                    win_values[i] = e.width;
+                    config_mask = config_mask | _XCB_CONFIG_WINDOW_WIDTH;
+                    config_values[i] = e.width;
                     i += 1;
                 }
-// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_HEIGHT);
+                // warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_HEIGHT);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_HEIGHT) > 0) {
-                    win_mask = win_mask | _XCB_CONFIG_WINDOW_HEIGHT;
-                    win_values[i] = e.height;
+                    config_mask = config_mask | _XCB_CONFIG_WINDOW_HEIGHT;
+                    config_values[i] = e.height;
                     i += 1;
                 }
 
-                win_mask = win_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
-                win_values[i] = BORDER_WIDTH;
+                config_mask = config_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
+                config_values[i] = BORDER_WIDTH;
                 i += 1;
 
-// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_SIBLING);
+                // warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_SIBLING);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_SIBLING) > 0) {
-                    win_mask = win_mask | _XCB_CONFIG_WINDOW_SIBLING;
-                    win_values[i] = e.sibling;
+                    config_mask = config_mask | _XCB_CONFIG_WINDOW_SIBLING;
+                    config_values[i] = @intCast(i32, e.sibling);
                     i += 1;
                 }
 
-// warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_STACK_MODE);
+                // warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_STACK_MODE);
                 if ((e.value_mask & _XCB_CONFIG_WINDOW_STACK_MODE) > 0) {
-                    win_mask = win_mask | _XCB_CONFIG_WINDOW_STACK_MODE;
-                    win_values[i] = e.stack_mode;
+                    config_mask = config_mask | _XCB_CONFIG_WINDOW_STACK_MODE;
+                    config_values[i] = e.stack_mode;
                     i += 1;
                 }
 
                 var return_pointer: xcb_void_cookie_t = undefined;
-                _ = _xcb_configure_window(dpy, e.window, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
+                _ = _xcb_configure_window(dpy, win, config_mask, @ptrCast(?*const c_void, &config_values), &return_pointer);
 
 
-                // TODO: Move it under 'map request' event ???
-                var values = []u32{default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW};
-                _ = _xcb_change_window_attributes(dpy, e.window, _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK, @ptrCast(?*const c_void, &values), &return_cookie);
+                // var return_cookie: xcb_void_cookie_t = undefined;
+                var attr_mask: u16 = _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK;
+                var attr_values = []u32{default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW};
+                _ = _xcb_change_window_attributes(dpy, win, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
+
 
                 _ = xcb_flush(dpy);
             },
@@ -360,19 +379,10 @@ warn("{}\n", e);
                 setWindowEvents(dpy, e.window, screen_root);
 
                 // TODO: set window location and dimensions
-                var return_geo: xcb_get_geometry_cookie_t = undefined;
-                _ = _xcb_get_geometry(dpy, e.window, &return_geo);
-                var geo = xcb_get_geometry_reply(dpy, return_geo, null);
                 var active_screen = getActiveMouseScreen(screens);
-                warn("{}\n", geo.?[0]);
-                var new_geo = getWindowGeometryInside(geo.?[0], active_screen);
-                warn("--------------\n{}\n", new_geo);
+                resizeAndMoveWindow(dpy, e.window, active_screen, screen_padding, BORDER_WIDTH);
 
-                var win_mask: u16 = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y | _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
-                var win_values = []i32{new_geo.x, new_geo.y, new_geo.width, new_geo.height};
 
-                var return_pointer: xcb_void_cookie_t = undefined;
-                _ = _xcb_configure_window(dpy, e.window, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
 
                 _ = xcb_flush(dpy);
 
@@ -394,8 +404,106 @@ debugGroups(groups);
                 var e = @ptrCast(*xcb_button_press_event_t, &ev);
                 warn("{}\n", e);
 
+                var return_grab_cookie: xcb_grab_pointer_cookie_t = undefined;
+                var cursor = u32(0);
+                _ = _xcb_grab_pointer(dpy, 0, e.event,
+                                      _XCB_EVENT_MASK_BUTTON_RELEASE | _XCB_EVENT_MASK_POINTER_MOTION,
+                                      _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC,
+                                      e.event, cursor, _XCB_TIME_CURRENT_TIME,
+                                      &return_grab_cookie);
 
+                var grab_pointer = xcb_grab_pointer_reply(dpy, return_grab_cookie, null);
                 var is_grabbed = true;
+
+                var return_geo: xcb_get_geometry_cookie_t = undefined;
+                _ = _xcb_get_geometry(dpy, e.event, &return_geo);
+                var win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+                // TODO: get screen that the window is on
+                var active_screen = getActiveMouseScreen(screens);
+                warn("{}\n", @intCast(u32, _XCB_MOD_MASK_1));
+                warn("{}\n", @intCast(u32, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT));
+
+                while (is_grabbed) {
+                    var ev_inside = xcb_wait_for_event(dpy).?[0];
+                    switch (ev_inside.response_type & ~u8(0x80)) {
+                        // TODO: what if some other event happens here: configure, map, etc
+                        XCB_MOTION_NOTIFY => {
+                            warn("xcb inside: motion notify\n");
+                            var e_inside = @ptrCast(*xcb_motion_notify_event_t, &ev_inside);
+                            var win_mask: u16 = 0;
+                            var win_values: [2]i32 = undefined;
+                            var xdiff = e_inside.root_x - e.root_x;
+                            var ydiff = e_inside.root_y - e.root_y;
+
+                            if (e.detail == _XCB_BUTTON_INDEX_1) {
+                                win_mask = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y;
+                                if (e.state == _XCB_MOD_MASK_1) {
+
+                                    var x: i32 = win_geo.x;
+                                    var y: i32 = win_geo.y;
+                                    var screen = active_screen;
+
+                                    x += xdiff;
+                                    y += ydiff;
+
+                                    var new_win_geometry = inBoundsWindowGeometry(x, y, win_geo.width, win_geo.height, BORDER_WIDTH, screen_padding, window_min_width, window_min_height, screen);
+
+                                    if (win_geo.width > screen.width) {
+                                        new_win_geometry.x = screen.x + @intCast(i32, screen_padding);
+                                    }
+
+                                    if (win_geo.height > screen.height) {
+                                        new_win_geometry.y = screen.y + @intCast(i32, screen_padding);
+                                    }
+
+                                    win_values[0] = new_win_geometry.x;
+                                    win_values[1] = new_win_geometry.y;
+
+                                } else if (e.state == (_XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT)) {
+                                    win_values[0] = win_geo.x + xdiff;
+                                    win_values[1] = win_geo.y + ydiff;
+                                }
+
+                            } else if (e.detail == _XCB_BUTTON_INDEX_3) {
+                                win_mask = _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
+                                if (e.state == _XCB_MOD_MASK_1) {
+                                    var width = @intCast(i32, win_geo.width) + xdiff;
+                                    var height = @intCast(i32, win_geo.height) + ydiff;
+
+                                    var new_win_geometry = inBoundsWindowGeometry(win_geo.x, win_geo.y, width,height, BORDER_WIDTH, screen_padding, window_min_width, window_min_height, active_screen);
+
+                                    win_values[0] = new_win_geometry.width;
+                                    win_values[1] = new_win_geometry.height;
+
+                                } else if (e.state == (_XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT)) {
+                                    win_values[0] = std.math.max(@intCast(i32, window_min_width),
+                                                                 @intCast(i32, win_geo.width) + xdiff);
+                                    win_values[1] = std.math.max(@intCast(i32, window_min_height),
+                                                         @intCast(i32, win_geo.height) + ydiff);
+                                }
+                            }
+
+                            var return_pointer: xcb_void_cookie_t = undefined;
+                            _ = _xcb_configure_window(dpy, e.event, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
+                            _ = xcb_flush(dpy);
+                        },
+                        XCB_BUTTON_RELEASE => {
+                            warn("xcb inside: button release\n");
+                            var e_inside = @ptrCast(*xcb_button_release_event_t, &ev_inside);
+                            warn("{}\n", e_inside);
+                            // TODO: check if screen has changed. only applies on
+                            // movement event
+                            // TODO: if screen changed need to move window
+                            is_grabbed = false;
+                        },
+                        else => {
+                            warn("xcb inside: else\n");
+                        }
+                    }
+                }
+
+                var return_ungrab_cookie: xcb_void_cookie_t = undefined;
+                _ = _xcb_ungrab_pointer(dpy, _XCB_TIME_CURRENT_TIME, &return_ungrab_cookie);
 
                 _ = xcb_flush(dpy);
             },
@@ -561,24 +669,24 @@ const WindowGeometry = struct {
 };
 
 
-fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Screen) WindowGeometry {
-    var screen_width = screen.width;
-    var screen_height = screen.height;
-    var new_x = std.math.max(1, x - screen.x);
-    var new_y = std.math.max(1, y - screen.y);
+fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, border_width: i32, screen_padding: i32, window_min_width: i32, window_min_height: i32, screen: *Screen) WindowGeometry {
+    var screen_width:i32 = screen.width;
+    var screen_height:i32 = screen.height;
+    var new_x = std.math.max(screen_padding, x - screen.x);
+    var new_y = std.math.max(screen_padding, y - screen.y);
     var new_width = width;
     var new_height = height;        
 
 
     // Width and x coordinate
-    var win_total_width = new_width + 2 * BORDER_WIDTH;
+    var win_total_width = new_width + 2 * border_width;
 
     if ((new_x + win_total_width) >= screen_width) {
         new_x = new_x - (new_x + win_total_width - screen_width);
-        new_width = screen_width - 2 * BORDER_WIDTH - (x - screen.x) - 1;
+        new_width = screen_width - 2 * border_width - (x - screen.x) - screen_padding;
     }
 
-    new_x = std.math.max(1, new_x + screen.x - 1);
+    new_x = std.math.max(screen_padding, new_x + screen.x - screen_padding);
 
     if (new_width < window_min_width) {
         new_width = window_min_width;
@@ -586,14 +694,14 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
 
 
     // Height and y coordinate
-    var win_total_height = new_height + 2 * BORDER_WIDTH;
+    var win_total_height = new_height + 2 * border_width;
 
     if ((new_y + win_total_height) >= screen_height) {
         new_y = new_y - (new_y + win_total_height - screen_height);
-        new_height = screen_height - 2 * BORDER_WIDTH - (y - screen.y) - 1;
+        new_height = screen_height - 2 * border_width - (y - screen.y) - screen_padding;
     }
 
-    new_y = std.math.max(1, new_y + screen.y - 1);
+    new_y = std.math.max(screen_padding, new_y + screen.y - screen_padding);
 
     if (new_height < window_min_height) {
         new_height = window_min_height;
@@ -608,7 +716,7 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
     };
 }
 
-fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) WindowGeometry {
+fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen, border_width: i32, screen_padding: i32) WindowGeometry {
     var screen_width:i32 = screen.width;
     var screen_height:i32 = screen.height;
     var x:i32 = w_attr.x - screen.x;
@@ -616,37 +724,36 @@ fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) Wi
     var width:i32 = w_attr.width;
     var height:i32 = w_attr.height;        
 
-
     // Width and x coordinate
-    var win_total_width = width + 2 * BORDER_WIDTH;
+    var win_total_width = width + 2 * border_width;
 
     if (win_total_width >= screen_width) {
-        width = screen_width - 2;
+        width = screen_width - 2 * screen_padding;
     }
 
-    win_total_width = width + 2 * BORDER_WIDTH;
+    win_total_width = width + 2 * border_width;
 
     if ((x + win_total_width) >= screen_width) {
-        x = x - (x + win_total_width - screen_width) - 1;
+        x = x - (x + win_total_width - screen_width) - screen_padding;
     }
 
-    x = std.math.max(1, x) + screen.x;
+    x = std.math.max(screen_padding, x) + screen.x;
 
 
     // Height and y coordinate
-    var win_total_height = height + 2 * BORDER_WIDTH;
+    var win_total_height = height + 2 * border_width;
 
     if (win_total_height >= screen_height) {
-        height = screen_height - 2;
+        height = screen_height - 2 * screen_padding;
     }
 
-    win_total_height = height + 2 * BORDER_WIDTH;
+    win_total_height = height + 2 * border_width;
 
     if ((y + win_total_height) >= screen_height) {
-        y = y - (y + win_total_height - screen_height) - 1;
+        y = y - (y + win_total_height - screen_height) - screen_padding;
     }
 
-    y = std.math.max(1, y) + screen.y;
+    y = std.math.max(screen_padding, y) + screen.y;
 
     return WindowGeometry {
         .x = x,
@@ -886,15 +993,55 @@ fn updateFocus(dpy: ?*xlib.Display, old_node: ?*LinkedList(xlib.Window).Node, ne
 }
 
 
-
+// TODO: maybe can remove screen_root ???
 fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, screen_root: u32) void {
     var return_void_pointer: xcb_void_cookie_t = undefined;
 
-    _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS|_XCB_EVENT_MASK_BUTTON_RELEASE, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, screen_root, XCB_NONE, 1, _XCB_MOD_MASK_1, &return_void_pointer);
+    _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_1, _XCB_MOD_MASK_1, &return_void_pointer);
+
+    _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_1, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, &return_void_pointer);
+
+    _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_3, _XCB_MOD_MASK_1, &return_void_pointer);
+
+    _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_3, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, &return_void_pointer);
 
 }
 
+fn configureWindow(dpy: ?*xcb_connection_t, win: xcb_window_t, border_width: u16, border_color: u32) void {
+    var i: u8 = 0;
+    var config_mask: u16 = 0;
+    var config_values: [1]u32 = undefined;
 
+    config_mask = config_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
+    config_values[i] = border_width;
+    i += 1;
+
+    var return_pointer: xcb_void_cookie_t = undefined;
+    _ = _xcb_configure_window(dpy, win, config_mask, @ptrCast(?*const c_void, &config_values), &return_pointer);
+
+    var return_cookie: xcb_void_cookie_t = undefined;
+    const attr_mask = _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK;
+    var attr_values = []u32{border_color, _XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_BUTTON_PRESS};
+    _ = _xcb_change_window_attributes(dpy, win, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
+}
+
+
+
+// TODO: bad name. resizing and moving happens in bounds
+fn resizeAndMoveWindow(dpy: ?*xcb_connection_t, win: xcb_window_t, active_screen: *Screen, screen_padding: u16, border_width: u16) void {
+    var return_geo: xcb_get_geometry_cookie_t = undefined;
+    _ = _xcb_get_geometry(dpy, win, &return_geo);
+    var geo = xcb_get_geometry_reply(dpy, return_geo, null);
+    warn("{}\n", geo.?[0]);
+    var new_geo = getWindowGeometryInside(geo.?[0], active_screen, border_width, screen_padding);
+    warn("--------------\n{}\n", new_geo);
+
+    var win_mask: u16 = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y | _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
+    var win_values = []i32{new_geo.x, new_geo.y, new_geo.width, new_geo.height};
+
+    var return_pointer: xcb_void_cookie_t = undefined;
+    _ = _xcb_configure_window(dpy, win, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
+}
 
 
 
@@ -933,6 +1080,10 @@ pub extern fn _xcb_query_pointer(c: ?*xcb_connection_t, window: xcb_window_t, re
 
 
 pub extern fn _xcb_get_geometry(c: ?*xcb_connection_t, drawable: xcb_drawable_t, return_pointer: *xcb_get_geometry_cookie_t) *xcb_get_geometry_cookie_t;
+
+pub extern fn _xcb_grab_pointer(c: ?*xcb_connection_t, owner_events: u8, grab_window: xcb_window_t, event_mask: u16, pointer_mode: u8, keyboard_mode: u8, confine_to: xcb_window_t, cursor: xcb_cursor_t, time_0: xcb_timestamp_t, return_pointer: *xcb_grab_pointer_cookie_t) *xcb_grab_pointer_cookie_t;
+
+pub extern fn _xcb_ungrab_pointer(c: ?*xcb_connection_t, time_0: xcb_timestamp_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
 
 // pub extern fn _xcb_translate_coordinates(c: ?*xcb_connection_t, src_window: xcb_window_t, dst_window: xcb_window_t, src_x: i16, src_y: i16, return_pointer: *xcb_translate_coordinates_cookie_t) *xcb_translate_coordinates_cookie_t;
