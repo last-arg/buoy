@@ -119,3 +119,16 @@ xcb_void_cookie_t *_xcb_ungrab_pointer(xcb_connection_t *conn, xcb_timestamp_t t
   *return_pointer = result;
   return return_pointer;
 }
+
+xcb_void_cookie_t *_xcb_set_input_focus(xcb_connection_t *conn, uint8_t revert_to, xcb_window_t focus, xcb_timestamp_t time, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_set_input_focus(conn, revert_to, focus, time);
+  *return_pointer = result;
+  return return_pointer;
+}
+
+xcb_get_input_focus_cookie_t *_xcb_get_input_focus(xcb_connection_t *conn, xcb_get_input_focus_cookie_t *return_pointer) {
+  xcb_get_input_focus_cookie_t result = xcb_get_input_focus(conn);
+  *return_pointer = result;
+  return return_pointer;
+}
+

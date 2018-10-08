@@ -41,3 +41,6 @@ xcb_grab_pointer_cookie_t *_xcb_grab_pointer(xcb_connection_t *conn, uint8_t own
 
 xcb_void_cookie_t *_xcb_ungrab_pointer(xcb_connection_t *conn, xcb_timestamp_t time, xcb_void_cookie_t *return_pointer);
 
+xcb_void_cookie_t *_xcb_set_input_focus(xcb_connection_t *conn, uint8_t revert_to, xcb_window_t focus, xcb_timestamp_t time, xcb_void_cookie_t *return_pointer);
+
+xcb_get_input_focus_cookie_t *_xcb_get_input_focus(xcb_connection_t *conn, xcb_get_input_focus_cookie_t *return_pointer);
