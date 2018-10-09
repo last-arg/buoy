@@ -33,13 +33,6 @@ xcb_void_cookie_t *_xcb_configure_window(xcb_connection_t *conn, xcb_window_t wi
   return return_pointer;
 }
 
-xcb_void_cookie_t *_xcb_map_window(xcb_connection_t *conn, xcb_window_t window, xcb_void_cookie_t * return_pointer) {
-  xcb_void_cookie_t result = xcb_map_window(conn, window);
-  *return_pointer = result;
-  return return_pointer;
-}
-
-
 xcb_void_cookie_t *_xcb_free_pixmap(xcb_connection_t *conn, xcb_pixmap_t pixmap, xcb_void_cookie_t *return_pointer) {
   xcb_void_cookie_t result = xcb_free_pixmap(conn, pixmap);
   *return_pointer = result;
@@ -132,3 +125,14 @@ xcb_get_input_focus_cookie_t *_xcb_get_input_focus(xcb_connection_t *conn, xcb_g
   return return_pointer;
 }
 
+xcb_void_cookie_t *_xcb_map_window(xcb_connection_t *conn, xcb_window_t window, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_map_window(conn, window);
+  *return_pointer = result;
+  return return_pointer;
+}
+
+xcb_void_cookie_t *_xcb_unmap_window(xcb_connection_t *conn, xcb_window_t window, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_unmap_window(conn, window);
+  *return_pointer = result;
+  return return_pointer;
+}

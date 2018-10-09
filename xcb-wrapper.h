@@ -12,8 +12,6 @@ xcb_void_cookie_t *_xcb_change_window_attributes(xcb_connection_t *conn, xcb_win
 
 xcb_void_cookie_t *_xcb_configure_window(xcb_connection_t *conn, xcb_window_t window, uint16_t value_mask, const uint32_t *value_list, xcb_void_cookie_t *return_pointer);
 
-xcb_void_cookie_t *_xcb_map_window(xcb_connection_t *conn, xcb_window_t window, xcb_void_cookie_t * return_pointer);
-
 xcb_void_cookie_t *_xcb_free_pixmap(xcb_connection_t *conn, xcb_pixmap_t pixmap, xcb_void_cookie_t *return_pointer);
 
 xcb_void_cookie_t *_xcb_create_pixmap(xcb_connection_t *conn, uint8_t depth, xcb_pixmap_t pid, xcb_drawable_t drawable, uint16_t width, uint16_t height, xcb_void_cookie_t *return_pointer);
@@ -44,3 +42,7 @@ xcb_void_cookie_t *_xcb_ungrab_pointer(xcb_connection_t *conn, xcb_timestamp_t t
 xcb_void_cookie_t *_xcb_set_input_focus(xcb_connection_t *conn, uint8_t revert_to, xcb_window_t focus, xcb_timestamp_t time, xcb_void_cookie_t *return_pointer);
 
 xcb_get_input_focus_cookie_t *_xcb_get_input_focus(xcb_connection_t *conn, xcb_get_input_focus_cookie_t *return_pointer);
+
+xcb_void_cookie_t *_xcb_map_window(xcb_connection_t *conn, xcb_window_t window, xcb_void_cookie_t *return_pointer);
+
+xcb_void_cookie_t *_xcb_unmap_window(xcb_connection_t *conn, xcb_window_t window, xcb_void_cookie_t *return_pointer);
