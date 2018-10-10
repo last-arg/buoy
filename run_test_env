@@ -1,6 +1,6 @@
 #!/bin/sh
 
-Xephyr +extension RANDR -screen 1200x500 -ac -wr -noreset -zap :1 &
+Xephyr +extension RANDR -screen 1200x500 -ac -wr -noreset -zap -sw-cursor :1 &
 sleep 1 
 xrandr --display :1 --setmonitor FAKE~1 600/254x500/286+0+0 default
 xrandr --display :1 --setmonitor FAKE~2 600/254x400/286+600+0 none
