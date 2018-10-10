@@ -136,3 +136,28 @@ xcb_void_cookie_t *_xcb_unmap_window(xcb_connection_t *conn, xcb_window_t window
   *return_pointer = result;
   return return_pointer;
 }
+
+xcb_void_cookie_t *_xcb_warp_pointer(xcb_connection_t *conn, xcb_window_t src_window, xcb_window_t dst_window, int16_t src_x, int16_t src_y, uint16_t src_width, uint16_t src_height, int16_t dst_x, int16_t dst_y, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_warp_pointer(conn, src_window, dst_window, src_x, src_y, src_width, src_height, dst_x, dst_y);
+  *return_pointer = result;
+  return return_pointer;
+}
+
+xcb_void_cookie_t *_xcb_open_font(xcb_connection_t *conn, xcb_font_t fid, uint16_t name_len, const char * name, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_open_font(conn, fid, name_len, name);
+  *return_pointer = result;
+  return return_pointer;
+}
+
+xcb_void_cookie_t *_xcb_create_glyph_cursor(xcb_connection_t *conn, xcb_cursor_t cid, xcb_font_t source_font, xcb_font_t mask_font, uint16_t source_char, uint16_t mask_char, uint16_t fore_red, uint16_t fore_green, uint16_t fore_blue, uint16_t back_red, uint16_t back_green, uint16_t back_blue, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_create_glyph_cursor(conn, cid, source_font, mask_font, source_char, mask_char, fore_red, fore_green, fore_blue, back_red, back_green, back_blue);
+  *return_pointer = result;
+  return return_pointer;
+}
+
+xcb_void_cookie_t *_xcb_free_cursor(xcb_connection_t *connection, xcb_cursor_t cursor, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_free_cursor(connection, cursor);
+  *return_pointer = result;
+  return return_pointer;
+}
+

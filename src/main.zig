@@ -67,6 +67,7 @@ const _XCB_BUTTON_INDEX_3 = 3;
 
 const _XCB_CW_BACK_PIXEL = 2;
 const _XCB_CW_EVENT_MASK = 2048;
+const _XCB_CW_CURSOR = 16384;
 const _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT = 1048576;
 const _XCB_CW_BORDER_PIXMAP = 4;
 const _XCB_INPUT_FOCUS_POINTER_ROOT = 1;
@@ -98,19 +99,12 @@ const Screen = struct {
 const Group = struct {
     index: u8,
     windows: LinkedList(xcb_window_t),
-    // active_screen: // TODO: might be needed when moving hidden group to new screen.
-                      // Should also able to get it from group windows.
-                      // If there are no windows it will still be ok.
 };
 
 const Window = struct {
     id: xcb_window_t,
-    screen_id: u32, // TODO: Change to screen/monitor id/name/index ???
+    screen_id: u32, 
     group_index: u8,
-    // x: c_int,
-    // y: c_int,
-    // width: c_int,
-    // height: c_int,
 };
 
 const WindowGeometry = struct {
@@ -147,13 +141,25 @@ pub fn main() !void {
 
     var return_cookie: xcb_void_cookie_t = undefined;
 
+    // Create cursor
+    var font_id = xcb_generate_id(dpy);
+    _ = _xcb_open_font(dpy, font_id, 6, c"cursor", &return_cookie);
+
+    var cursor_id = xcb_generate_id(dpy);
+    _ = _xcb_create_glyph_cursor(dpy, cursor_id, font_id, font_id,
+                             68, 68 + 1,
+                             0, 0, 0,
+                             0xffff, 0xffff, 0xffff, &return_cookie);
+
     var value_list = []c_uint{
         _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT
-        | _XCB_EVENT_MASK_POINTER_MOTION
         // | _XCB_EVENT_MASK_EXPOSURE
-        // | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY,
+        // | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY
+        | _XCB_EVENT_MASK_POINTER_MOTION,
+        cursor_id
     };
-    _ = _xcb_change_window_attributes(dpy, screen_root, _XCB_CW_EVENT_MASK, @ptrCast(?*const c_void, &value_list), &return_cookie);
+    _ = _xcb_change_window_attributes(dpy, screen_root, _XCB_CW_EVENT_MASK | _XCB_CW_CURSOR, @ptrCast(?*const c_void, &value_list), &return_cookie);
+    _ = _xcb_free_cursor(dpy, cursor_id, &return_cookie);
 
 
     // Set keyboard events
@@ -187,6 +193,9 @@ pub fn main() !void {
 
     var default_border_color = default_color_reply.?[0].pixel;
     var active_border_color = active_color_reply.?[0].pixel;
+
+
+
 
     
     // Setup: Screens, Groups, Windows
@@ -235,20 +244,21 @@ pub fn main() !void {
         var j: u8 = 0;
         var return_monitors_iter: xcb_randr_monitor_info_iterator_t = undefined;
         _ = _xcb_randr_get_monitors_monitors_iterator(monitors, &return_monitors_iter);
+        var is_set_has_mouse = false;
         while (return_monitors_iter.rem != 0) : ({
             _ = xcb_randr_monitor_info_next(@ptrCast(?[*]struct_xcb_randr_monitor_info_iterator_t ,&return_monitors_iter));
             j += 1;
         }) {
             var monitor = return_monitors_iter.data.?[0];
 
-            // TODO: what every result is false
-            // Solution: warp pointer to a screen and set it true.
-            // This has to take place after this while loop
             var has_mouse = (pointer.root_x >= monitor.x
                 and pointer.root_x <= (monitor.x + @intCast(i16, monitor.width))
                 and pointer.root_y >= monitor.y
                 and pointer.root_y <= (monitor.y + @intCast(i16, monitor.height)));
 
+            if (!is_set_has_mouse and has_mouse) {
+                is_set_has_mouse = true;
+            }
             warn("{}\n", has_mouse);
             var screen = Screen {
                 // NOTE: Xephyr test environment doesn't have primary monitor
@@ -267,6 +277,13 @@ pub fn main() !void {
 
             var node_ptr = try screens.createNode(screen, allocator);
             screens.append(node_ptr);
+        }
+
+        // TODO: might have to do this for another methods screen/monitor detection ???
+        if (!is_set_has_mouse) {
+            var screen_info = screens.first.?.data;
+            _ = _xcb_warp_pointer(dpy, screen_root, screen_root, pointer.root_x, pointer.root_y, screen_info.width, screen_info.height, @intCast(i16, screen_info.width / 2), @intCast(i16, screen_info.height / 2), &return_cookie);
+            screens.first.?.data.has_mouse = true;
         }
     }
 
@@ -1315,3 +1332,11 @@ pub extern fn _xcb_map_window(c: ?*xcb_connection_t, window: xcb_window_t, retur
 
 pub extern fn _xcb_unmap_window(c: ?*xcb_connection_t, window: xcb_window_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
+
+pub extern fn _xcb_warp_pointer(c: ?*xcb_connection_t, src_window: xcb_window_t, dst_window: xcb_window_t, src_x: i16, src_y: i16, src_width: u16, src_height: u16, dst_x: i16, dst_y: i16, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_open_font(c: ?*xcb_connection_t, fid: xcb_font_t, name_len: u16, name: ?[*]const u8, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_create_glyph_cursor(c: ?*xcb_connection_t, cid: xcb_cursor_t, source_font: xcb_font_t, mask_font: xcb_font_t, source_char: u16, mask_char: u16, fore_red: u16, fore_green: u16, fore_blue: u16, back_red: u16, back_green: u16, back_blue: u16, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_free_cursor(c: ?*xcb_connection_t, cursor: xcb_cursor_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
