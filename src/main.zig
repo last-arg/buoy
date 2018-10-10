@@ -2,7 +2,6 @@
 // XStringToKeysym
 // TODO: Monitor/Screen is added/removed
 // TODO: maybe it is possible to combine functions getWindowGeometryInside and inBoundsWindowGeometry
-// TODO: fix window focusing when hiding/showing groups
 // TODO: moving mouse between windows that are on different screens won't always
 // change window focus
 
@@ -86,7 +85,7 @@ const _XCB_CW_BORDER_PIXEL = 8;
 
 
 const Screen = struct {
-    id: u32, // TODO: or use somekind of id ???
+    id: u32, 
     has_mouse: bool,
     x: i16,
     y: i16,
@@ -451,25 +450,26 @@ warn("{}\n", e);
                 // TODO: set window location and dimensions
                 resizeAndMoveWindow(dpy, e.window, active_screen, screen_padding, BORDER_WIDTH);
 
-
                 var attr_mask: u16 = _XCB_CW_EVENT_MASK;
                 var attr_values = []u32{_XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY};
                 _ = _xcb_change_window_attributes(dpy, e.window, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 
-                var focused_window = getFocusedWindow(dpy);
-                unfocusWindow(dpy, focused_window, default_border_color);
-                focusWindow(dpy, e.window, active_border_color);
 
                 if (!windows.contains(e.window)) {
                     _ = addWindow(allocator, e.window, active_screen, group, &windows);
                 }
 
                 _ = _xcb_map_window(dpy, e.window, &return_void_pointer);
-                _ = xcb_flush(dpy);
 
-debugScreens(screens, windows);
-debugWindows(windows);
-debugGroups(groups);
+                var focused_window = getFocusedWindow(dpy);
+                unfocusWindow(dpy, focused_window, default_border_color);
+                focusWindow(dpy, e.window, active_border_color);
+
+                _ = xcb_flush(dpy);
+            },
+            XCB_UNMAP_NOTIFY => {
+                warn("xcb: unmap notify\n");
+                _ = xcb_flush(dpy);
             },
             XCB_MAP_NOTIFY => {
                 warn("xcb: map notify\n");
@@ -642,6 +642,8 @@ debugGroups(groups);
 
                     if (screen.windows.first) |window| {
                         focusWindow(dpy, window.data, active_border_color);
+                    } else {
+                        focusWindow(dpy, screen_root, active_border_color);
                     }
                 }
 
@@ -667,6 +669,8 @@ warn("{}\n", e);
                     } else {
                         var groups_slice = groups.toSlice();
                         group_start: for (group_strings) |char, i| {
+                            // TODO: Empty group is first but there is also
+                            // active window. Have to hide either of them if selected
                             if (keysym == @intCast(u32, xlib.XStringToKeysym(char))) {
                                 warn("group press\n");
                                 var active_screen = blk: {
@@ -711,8 +715,8 @@ warn("{}\n", e);
                                 // Remove and unmap windows from existing group's screen
                                 if (group_screen) |screen| {
                                     warn("group existed on another screen");
-                                    var window_node = selected_group.windows.first;
-                                    while (window_node != null) : (window_node = window_node.?.next) {
+                                    var window_node = selected_group.windows.last;
+                                    while (window_node != null) : (window_node = window_node.?.prev) {
                                         var screen_window_node = screen.windows.first;
                                         while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
                                             if (screen_window_node.?.data == window_node.?.data) {
@@ -774,6 +778,8 @@ warn("{}\n", e);
                                 }
 
                                 if (active_screen.windows.first) |window_id| {
+                                    var focused_window = getFocusedWindow(dpy);
+                                    unfocusWindow(dpy, focused_window, default_border_color);
                                     focusWindow(dpy, window_id.data, active_border_color);
                                 }
 
@@ -800,7 +806,7 @@ debugGroups(groups);
                     and e.detail != _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) continue;
 
                 warn("xcb: enter notify\n");
-                // warn("{}\n", e);
+                warn("{}\n", e);
 
                 var win = windows.get(e.event);
                 var active_screen = getScreen(win.?.value.screen_id, screens);
@@ -847,6 +853,11 @@ debugGroups(groups);
                 }
 
                 _ = xcb_flush(dpy);
+
+// debugScreens(screens, windows);
+// debugWindows(windows);
+// debugGroups(groups);
+
             },
             else => {
                 warn("xcb: else -> {}\n", ev);
