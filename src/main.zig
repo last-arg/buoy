@@ -2,8 +2,6 @@
 // XStringToKeysym
 // TODO: Monitor/Screen is added/removed
 // TODO: maybe it is possible to combine functions getWindowGeometryInside and inBoundsWindowGeometry
-// TODO: moving mouse between windows that are on different screens won't always
-// change window focus
 
 // use @import("debug.zig"); // TODO: move debug functions to its own file
 const std = @import("std");
@@ -306,9 +304,16 @@ pub fn main() !void {
         while (i < children_count) : (i+=1) {
             warn("{}\n", children.?[i]);
             var win = children.?[i];
-            // TODO: find in which screen window is.
-            // Fallback to first or primary screen.
-            var active_screen = &screens.first.?.data;
+            var active_screen = blk: {
+                var return_geo: xcb_get_geometry_cookie_t = undefined;
+                _ = _xcb_get_geometry(dpy, win, &return_geo);
+                var geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+                if (getScreenBasedOnCoords(geo.x, geo.y, screens)) |screen|  {
+                break :blk screen;
+                }
+
+                break :blk &screens.first.?.data;
+            };
             var group_index = active_screen.groups.first.?.data;
             var group = &groups.toSlice()[group_index];
 
@@ -316,7 +321,7 @@ pub fn main() !void {
 
             configureWindow(dpy, win, BORDER_WIDTH, default_border_color);
             resizeAndMoveWindow(dpy, win, active_screen, screen_padding, BORDER_WIDTH);
-            setWindowEvents(dpy, win, screen_root);
+            setWindowEvents(dpy, win, group_strings);
             _ = addWindow(allocator, win, active_screen, group, &windows);
 
         }
@@ -466,7 +471,7 @@ warn("{}\n", e);
                 var group = &groups.toSlice()[group_index];
 
 
-                setWindowEvents(dpy, e.window, screen_root);
+                setWindowEvents(dpy, e.window, group_strings);
 
                 // TODO: set window location and dimensions
                 resizeAndMoveWindow(dpy, e.window, active_screen, screen_padding, BORDER_WIDTH);
@@ -822,11 +827,16 @@ debugGroups(groups);
                 _ = xcb_flush(dpy);
             },
             XCB_ENTER_NOTIFY => {
+                warn("xcb: enter notify\n");
                 var e = @ptrCast(*xcb_enter_notify_event_t, &ev);
+                // TODO: when crossing screen from window to window sometimes
+                // window focusing won't fire. Problem in this if statement.
+                // TODO NOTE: Can also be fixed by removing if statement in
+                // motion notify event.
                 if (e.detail != _XCB_NOTIFY_DETAIL_ANCESTOR
                     and e.detail != _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) continue;
 
-                warn("xcb: enter notify\n");
+                // warn("xcb: enter notify\n");
                 warn("{}\n", e);
 
                 var win = windows.get(e.event);
@@ -1099,6 +1109,18 @@ fn getNewScreenOnChange(x: i16, y: i16, screens: LinkedList(Screen), active_scre
 }
 
 
+fn getScreenBasedOnCoords(x: i16, y: i16, screens: LinkedList(Screen)) ?*Screen {
+    var screen = screens.first;
+    while (screen != null) : (screen = screen.?.next) {
+        if (isPointerInScreen(screen.?.data, x, y)) { 
+            return &screen.?.data;
+        }
+    }
+
+    return null;
+}
+
+
 fn isPointerInScreen(screen: Screen, x: i16 , y: i16) bool {
     var screen_x_right = screen.x + @intCast(i32, screen.width) - 1;
     var screen_y_right = screen.y + @intCast(i32, screen.height) - 1;
@@ -1228,8 +1250,7 @@ fn debugGroups(groups: ArrayList(Group)) void {
 }
 
 
-// TODO: maybe can remove screen_root ???
-fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, screen_root: u32) void {
+fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, group_strings: []const [*]const u8) void {
     var return_void_pointer: xcb_void_cookie_t = undefined;
 
     _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_1, _XCB_MOD_MASK_1, &return_void_pointer);
@@ -1242,6 +1263,7 @@ fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, screen_root: u
 
 
 
+    // TODO: move window to group key events
     // Group movement
     // for (group_strings) |char| {
     //     var keysym = xlib.XStringToKeysym(char);
