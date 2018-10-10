@@ -321,8 +321,12 @@ pub fn main() !void {
 
         }
 
-        // TODO: focus first window on active monitor
+        if (getActiveMouseScreen(screens).windows.first) |win| {
+            focusWindow(dpy, win.data, active_border_color);
+        }
     }
+
+    _ = xcb_flush(dpy);
 
     debugScreens(screens, windows);
     debugWindows(windows);
