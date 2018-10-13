@@ -1,13 +1,8 @@
-// TODO: Try to remove/replace xlib functions
-// XStringToKeysym
-// TODO: Monitor/Screen is added/removed
-// TODO: maybe it is possible to combine functions getWindowGeometryInside and inBoundsWindowGeometry
-
-// use @import("debug.zig"); // TODO: move debug functions to its own file
 const std = @import("std");
 const fmt = std.fmt;
 const cstr = std.cstr;
 const warn = std.debug.warn;
+const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const os = std.os;
@@ -16,7 +11,6 @@ const ArrayList = std.ArrayList;
 const LinkedList = std.LinkedList;
 const hash_map = std.hash_map;
 const HashMap = std.HashMap;
-
 
 const xlib = @import("xlib.zig");
 const xatom = @cImport({
@@ -99,6 +93,7 @@ const Group = struct {
     windows: LinkedList(xcb_window_t),
 };
 
+// TODO: add geometry info to Window ???
 const Window = struct {
     id: xcb_window_t,
     screen_id: u32, 
@@ -112,17 +107,26 @@ const WindowGeometry = struct {
     height: i32,
 };
 
+const Point = struct {
+    x: i32,
+    y: i32,
+};
 
 const WindowsHashMap = HashMap(c_ulong, Window, getWindowHash, comptime hash_map.getAutoEqlFn(c_ulong));
 
 
+// ------- CONFIG -------
+var g_border_width: u16 = 10;
+var g_default_border_color: u32  = undefined;
+var g_active_border_color: u32 = undefined;
+var g_screen_padding: u16 = 0;
+var g_window_min_width: u16= 100; // NOTE: without border
+var g_window_min_height: u16 = 100; // NOTE: without border
+
+
 pub fn main() !void {
     // ------- CONFIG -------
-    const BORDER_WIDTH: u16 = 10;
-    var window_min_width: u16= 100; // NOTE: without border
-    var window_min_height: u16 = 100; // NOTE: without border
     var group_count: u8 = 10;
-    var screen_padding: u16 = 2;
 
     // TODO: Change/Add different allocator(s)
     const allocator = std.heap.c_allocator;
@@ -139,6 +143,8 @@ pub fn main() !void {
 
     var return_cookie: xcb_void_cookie_t = undefined;
 
+    // TODO: remove cursor creation ???
+    // Instead let user set cursor using xsetroot
     // Create cursor
     var font_id = xcb_generate_id(dpy);
     _ = _xcb_open_font(dpy, font_id, 6, c"cursor", &return_cookie);
@@ -189,8 +195,8 @@ pub fn main() !void {
     var default_color_reply = xcb_alloc_named_color_reply(dpy, return_grey_color_cookie, null);
     var active_color_reply = xcb_alloc_named_color_reply(dpy, return_blue_color_cookie, null);
 
-    var default_border_color = default_color_reply.?[0].pixel;
-    var active_border_color = active_color_reply.?[0].pixel;
+    g_default_border_color = default_color_reply.?[0].pixel;
+    g_active_border_color = active_color_reply.?[0].pixel;
 
 
 
@@ -299,7 +305,7 @@ pub fn main() !void {
         var children_count = tree_reply.?[0].children_len;
 
         var event_mask: u32 = _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK;
-        var values = []u32{default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW};
+        var values = []u32{g_default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW};
         var i: u16 = 0;
         while (i < children_count) : (i+=1) {
             warn("{}\n", children.?[i]);
@@ -319,15 +325,15 @@ pub fn main() !void {
 
             _ = _xcb_change_window_attributes(dpy, win, event_mask, @ptrCast(?*const c_void, &values), &return_cookie);
 
-            configureWindow(dpy, win, BORDER_WIDTH, default_border_color);
-            resizeAndMoveWindow(dpy, win, active_screen, screen_padding, BORDER_WIDTH);
+            configureWindow(dpy, win);
+            resizeAndMoveWindow(dpy, win, active_screen);
             setWindowEvents(dpy, win, group_strings);
             _ = addWindow(allocator, win, active_screen, group, &windows);
 
         }
 
         if (getActiveMouseScreen(screens).windows.first) |win| {
-            focusWindow(dpy, win.data, active_border_color);
+            focusWindow(dpy, win.data, g_active_border_color);
         }
     }
 
@@ -390,7 +396,7 @@ pub fn main() !void {
                                 }
                             }
                         }
-                        focusWindow(dpy, new_window.data, active_border_color);
+                        focusWindow(dpy, new_window.data, g_active_border_color);
                         _ = xcb_flush(dpy);
                     }
                 }
@@ -432,7 +438,7 @@ pub fn main() !void {
                 }
 
                 config_mask = config_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
-                config_values[i] = BORDER_WIDTH;
+                config_values[i] = g_border_width;
                 i += 1;
 
                 // warn("{}\n", e.value_mask & _XCB_CONFIG_WINDOW_SIBLING);
@@ -474,7 +480,7 @@ warn("{}\n", e);
                 setWindowEvents(dpy, e.window, group_strings);
 
                 // TODO: set window location and dimensions
-                resizeAndMoveWindow(dpy, e.window, active_screen, screen_padding, BORDER_WIDTH);
+                resizeAndMoveWindow(dpy, e.window, active_screen);
 
                 var attr_mask: u16 = _XCB_CW_EVENT_MASK;
                 var attr_values = []u32{_XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY};
@@ -488,8 +494,8 @@ warn("{}\n", e);
                 _ = _xcb_map_window(dpy, e.window, &return_void_pointer);
 
                 var focused_window = getFocusedWindow(dpy);
-                unfocusWindow(dpy, focused_window, default_border_color);
-                focusWindow(dpy, e.window, active_border_color);
+                unfocusWindow(dpy, focused_window, g_default_border_color);
+                focusWindow(dpy, e.window, g_active_border_color);
 
                 _ = xcb_flush(dpy);
             },
@@ -551,14 +557,14 @@ warn("{}\n", e);
                                         active_screen = new_screen;
                                     }
 
-                                    var new_win_geometry = inBoundsWindowGeometry(x, y, win_geo.width, win_geo.height, BORDER_WIDTH, screen_padding, window_min_width, window_min_height, active_screen);
+                                    var new_win_geometry = inBoundsWindowGeometry(x, y, win_geo.width, win_geo.height, active_screen);
 
                                     if (win_geo.width > active_screen.width) {
-                                        new_win_geometry.x = active_screen.x + @intCast(i32, screen_padding);
+                                        new_win_geometry.x = active_screen.x + @intCast(i32, g_screen_padding);
                                     }
 
                                     if (win_geo.height > active_screen.height) {
-                                        new_win_geometry.y = active_screen.y + @intCast(i32, screen_padding);
+                                        new_win_geometry.y = active_screen.y + @intCast(i32, g_screen_padding);
                                     }
 
                                     win_values[0] = new_win_geometry.x;
@@ -577,14 +583,14 @@ warn("{}\n", e);
                                 if (e.state == _XCB_MOD_MASK_1) {
 
 
-                                    var new_win_geometry = inBoundsWindowGeometry(win_geo.x, win_geo.y, width,height, BORDER_WIDTH, screen_padding, window_min_width, window_min_height, active_screen);
+                                    var new_win_geometry = inBoundsWindowGeometry(win_geo.x, win_geo.y, width,height, active_screen);
 
                                     win_values[0] = new_win_geometry.width;
                                     win_values[1] = new_win_geometry.height;
 
                                 } else if (e.state == (_XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT)) {
-                                    win_values[0] = std.math.max(@intCast(i32, window_min_width), width);
-                                    win_values[1] = std.math.max(@intCast(i32, window_min_height), height);
+                                    win_values[0] = std.math.max(@intCast(i32, g_window_min_width), width);
+                                    win_values[1] = std.math.max(@intCast(i32, g_window_min_height), height);
                                 }
                             }
 
@@ -664,12 +670,12 @@ debugGroups(groups);
                     warn("{}\n", e);
                     var focused_window = getFocusedWindow(dpy);
 
-                    unfocusWindow(dpy, focused_window, default_border_color);
+                    unfocusWindow(dpy, focused_window, g_default_border_color);
 
                     if (screen.windows.first) |window| {
-                        focusWindow(dpy, window.data, active_border_color);
+                        focusWindow(dpy, window.data, g_active_border_color);
                     } else {
-                        focusWindow(dpy, screen_root, active_border_color);
+                        focusWindow(dpy, screen_root, g_active_border_color);
                     }
                 }
 
@@ -677,15 +683,208 @@ debugGroups(groups);
             },
             XCB_KEY_PRESS => {
                 warn("xcb: key press\n");
-                var e = @ptrCast(*xcb_key_press_event_t, &ev);
+                const e = @ptrCast(*xcb_key_press_event_t, &ev);
 warn("{}\n", e);
 
-                var key_symbols = xcb_key_symbols_alloc(dpy);
-                var keysym = xcb_key_press_lookup_keysym(key_symbols, @ptrCast(?[*]xcb_key_press_event_t, &ev), 0);
-                xcb_key_symbols_free(key_symbols);
+                const key_symbols = xcb_key_symbols_alloc(dpy);
+                const keysym = xcb_key_press_lookup_keysym(key_symbols, @ptrCast(?[*]xcb_key_press_event_t, &ev), 0);
 
                 if (e.state == _XCB_MOD_MASK_1) {
-                    if (keysym == @intCast(u32, xlib.XStringToKeysym(c"t"))) {
+                    const keysym_left = @intCast(u32, xlib.XStringToKeysym(c"h"));
+                    const keysym_up = @intCast(u32, xlib.XStringToKeysym(c"k"));
+                    const keysym_right = @intCast(u32, xlib.XStringToKeysym(c"l"));
+                    const keysym_down = @intCast(u32, xlib.XStringToKeysym(c"j"));
+
+                    if (keysym == keysym_left
+                        or (keysym == keysym_up)
+                        or (keysym == keysym_right)
+                        or (keysym == keysym_down)) {
+
+                        var return_geo: xcb_get_geometry_cookie_t = undefined;
+                        _ = _xcb_get_geometry(dpy, e.event, &return_geo);
+                        const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+
+                        const win = windows.get(e.event);
+                        const screen = getScreen(win.?.value.screen_id, screens);
+                        var new_screen = screen;
+                        // Calculate 'cone' (triangle) points
+                        const win_center = Point{
+                            .x = win_geo.x + @intCast(i16, win_geo.width / 2) + @intCast(i16, g_border_width),
+                            .y = win_geo.y + @intCast(i16, win_geo.height / 2) + @intCast(i16, g_border_width),
+                        };
+
+
+                        const largest_distance = blk: {
+                            var largest_dim: u16 = 0;
+                            var screen_window_node = screen.windows.first.?.next;
+                            while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
+                                _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+                                const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+
+                                if (geo.width > largest_dim) {
+                                    largest_dim = geo.width;
+                                }
+
+                                if (geo.height > largest_dim) {
+                                    largest_dim = geo.height;
+                                }
+                            }
+
+                            const half_dim: i32 = @divTrunc(largest_dim, 2) + g_border_width;
+                            const x_distance = screen.x + @intCast(i32, screen.width) - win_center.x + half_dim;
+                            const y_distance = screen.y + @intCast(i32, screen.height) - win_center.y + half_dim;
+                            if (x_distance > y_distance) {
+                                break :blk x_distance;
+                            } else {
+                                break :blk y_distance;
+                            }
+                        };
+
+                        // @ChangeBasedOnDirection
+                        // getPointBasedOnDirection(key) ???
+                        //
+                        var t1 = Point{
+                            .x = undefined,
+                            .y = undefined,
+                        };
+                        var t2 = Point{
+                            .x = undefined,
+                            .y = undefined,
+                        };
+                        if (keysym_left == keysym) {
+                            t1 = Point{
+                                .x = win_center.x - largest_distance,
+                                .y = win_center.y - largest_distance,
+                            };
+                            t2 = Point{
+                                .x = win_center.x - largest_distance,
+                                .y = win_center.y + largest_distance,
+                            };
+                        } else if (keysym_up == keysym) {
+                            t1 = Point{
+                                .x = win_center.x - largest_distance,
+                                .y = win_center.y - largest_distance,
+                            };
+                            t2 = Point{
+                                .x = win_center.x + largest_distance,
+                                .y = win_center.y - largest_distance,
+                            };
+                        } else if (keysym_right == keysym) {
+                            t1 = Point{
+                                .x = win_center.x + largest_distance,
+                                .y = win_center.y - largest_distance,
+                            };
+                            t2 = Point{
+                                .x = win_center.x + largest_distance,
+                                .y = win_center.y + largest_distance,
+                            };
+                        } else if (keysym_down == keysym) {
+                            t1 = Point{
+                                .x = win_center.x - largest_distance,
+                                .y = win_center.y + largest_distance,
+                            };
+                            t2 = Point{
+                                .x = win_center.x + largest_distance,
+                                .y = win_center.y + largest_distance,
+                            };
+                        }
+
+
+                        warn("{}\n",win_center);
+                        warn("{}\n",t1);
+                        warn("{}\n",t2);
+
+                        var window_node = screen.windows.first.?.next;
+                        var closest_win: ?xcb_window_t = null;
+                        var closest_win_distance: u16 = undefined;
+                        while (window_node != null) : (window_node = window_node.?.next) {
+                            _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
+                            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+
+                            const result = try changeClosestWindow(win.?.value.id, win_geo, win_center, window_node.?.data, geo, closest_win, closest_win_distance, t1, t2);
+                            warn("check window\n");
+
+                            if (result > -1) {
+                                closest_win = window_node.?.data;
+                                closest_win_distance = @intCast(u16, result);
+                            }
+                        }
+
+                        // TODO: Improve screen checking. ??? Edge case
+                        // At the moment all the screens on the same 'row' are checked.
+                        // Need to only check previous(opposite direction of movement)
+                        // screen and all the next(direction of movement) screens.
+                        // Edge case: Window spans multiple screens and window's
+                        // midpoint is located on the previous screen.
+                        var screen_node = screens.first;
+                        while (screen_node != null) : (screen_node = screen_node.?.next) {
+                            if (screen_node.?.data.id == screen.id) continue;
+
+                            // @ChangeBasedOnDirection
+                            if (keysym == keysym_left or keysym == keysym_right) {
+                                const bottom_y = (screen.y + @intCast(i32, screen.height));
+                                const screen_midpoint = screen_node.?.data.y + @intCast(i16, screen_node.?.data.height / 2);
+                                if (screen_midpoint > screen.y and screen_midpoint > bottom_y) continue;
+                            } else if (keysym == keysym_up or keysym == keysym_down) {
+                                const right_x = (screen.x + @intCast(i32, screen.width));
+                                const screen_midpoint = screen_node.?.data.x + @intCast(i16, screen_node.?.data.height / 2);
+                                if (screen_midpoint > screen.x and screen_midpoint > right_x) continue;
+                            }
+
+                            var screen_window_node = screen_node.?.data.windows.first;
+                            while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
+                                _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+                                const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+                                const x_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
+                                const y_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
+                                // @ChangeBasedOnDirection
+                                // TODO: precheck keysym_* == keysym outside of loop
+                                if (keysym_left == keysym and x_midpoint > win_center.x) {
+                                    continue;
+                                } else if (keysym_up == keysym and y_midpoint < win_center.y) {
+                                    continue;
+                                } else if (keysym_right == keysym and x_midpoint < win_center.x) {
+                                    continue;
+                                } else if (keysym_down == keysym and y_midpoint > win_center.y) {
+                                    continue;
+                                }
+
+                                const closest_win_point = Point{
+                                    .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
+                                    .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
+                                };
+
+                                const new_distance = blk: {
+                                    var p1 = try std.math.powi(i32, win_geo.x - closest_win_point.x, 2);
+                                    var p2 = try std.math.powi(i32, win_geo.y - closest_win_point.y, 2);
+                                    break :blk std.math.sqrt(p1 + p2);
+                                };
+
+                                // TODO: test last two conditions
+                                if ((new_distance < closest_win_distance)
+                                    or (new_distance == closest_win_distance and screen_window_node.?.data > closest_win.?)
+                                    or (new_distance == 0 and screen_window_node.?.data > win.?.value.id)) {
+                                    closest_win = screen_window_node.?.data;
+                                    closest_win_distance = new_distance;
+                                    new_screen = &screen_node.?.data;
+                                }
+                            }
+
+                        }
+
+                        if (closest_win) |w_id| {
+                            var screen_window_node = new_screen.windows.first.?.next;
+                            while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
+                                if (screen_window_node.?.data == w_id) {
+                                    new_screen.windows.remove(screen_window_node.?);
+                                    new_screen.windows.prepend(screen_window_node.?);
+                                    break;
+                                }
+                            }
+                            unfocusWindow(dpy, win.?.value.id, g_default_border_color);
+                            focusWindow(dpy, w_id, g_active_border_color);
+                        }
+                    } else if (keysym == @intCast(u32, xlib.XStringToKeysym(c"t"))) {
                         warn("open xterm\n");
                         var argv = []const []const u8{"xterm"};
                         var child_result = try child.init(argv, allocator);
@@ -742,6 +941,7 @@ warn("{}\n", e);
                                 if (group_screen) |screen| {
                                     warn("group existed on another screen");
                                     var window_node = selected_group.windows.last;
+                                    // TODO: See if it is possible to improve loops
                                     while (window_node != null) : (window_node = window_node.?.prev) {
                                         var screen_window_node = screen.windows.first;
                                         while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
@@ -781,8 +981,8 @@ warn("{}\n", e);
 
                                 if (active_screen.windows.first) |window_id| {
                                     var focused_window = getFocusedWindow(dpy);
-                                    unfocusWindow(dpy, focused_window, default_border_color);
-                                    focusWindow(dpy, window_id.data, active_border_color);
+                                    unfocusWindow(dpy, focused_window, g_default_border_color);
+                                    focusWindow(dpy, window_id.data, g_active_border_color);
                                 }
 
                                 break;
@@ -796,71 +996,79 @@ debugGroups(groups);
 
                 } else if (e.state == _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT) {
 
-                    for (groups.toSlice()) |const_target_group, i| {
-                        var target_group = &groups.toSlice()[i];
-                        if (keysym == @intCast(u32, xlib.XStringToKeysym(group_strings[i]))) {
-                        var window = windows.get(e.event);
-                        if (target_group.index == window.?.value.group_index) break;
+                    if (keysym == @intCast(u32, xlib.XStringToKeysym(c"h"))) {
+                        warn("move left\n");
+                    } else if (keysym == @intCast(u32, xlib.XStringToKeysym(c"j"))) {
+                        warn("move down\n");
+                    } else if (keysym == @intCast(u32, xlib.XStringToKeysym(c"k"))) {
+                        warn("move up\n");
+                    } else if (keysym == @intCast(u32, xlib.XStringToKeysym(c"l"))) {
+                        warn("move right\n");
+                    } else {
+                        for (groups.toSlice()) |const_target_group, i| {
+                            var target_group = &groups.toSlice()[i];
+                            if (keysym == @intCast(u32, xlib.XStringToKeysym(group_strings[i]))) {
+                            var window = windows.get(e.event);
+                            if (target_group.index == window.?.value.group_index) break;
 
-                        warn("move window\n");
-                        var window_screen = getScreen(window.?.value.screen_id, screens);
-                        var group_windows = &groups.toSlice()[window.?.value.group_index].windows;
-                        var group_node = group_windows.first;
-                        while (group_node != null) : (group_node = group_node.?.next) {
-                            if (group_node.?.data == window.?.value.id) {
-                                group_windows.remove(group_node.?);
-                                group_windows.destroyNode(group_node.?, allocator);
-                                break;
-                            }
-                        }
-
-                        var screen_node = screens.first;
-                        screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
-                            var window_node = screen_node.?.data.windows.first;
-                            while (window_node != null) : (window_node = window_node.?.next) {
-                                if (window_node.?.data == window.?.value.id) {
-                                    unfocusWindow(dpy, window.?.value.id, default_border_color);
-                                    screen_node.?.data.windows.remove(window_node.?);
-                                    screen_node.?.data.windows.destroyNode(window_node.?, allocator);
-                                    break :screen_loop;
+                            warn("move window to a group\n");
+                            var window_screen = getScreen(window.?.value.screen_id, screens);
+                            var group_windows = &groups.toSlice()[window.?.value.group_index].windows;
+                            var group_node = group_windows.first;
+                            while (group_node != null) : (group_node = group_node.?.next) {
+                                if (group_node.?.data == window.?.value.id) {
+                                    group_windows.remove(group_node.?);
+                                    group_windows.destroyNode(group_node.?, allocator);
+                                    break;
                                 }
                             }
-                        }
 
-                        _ = _xcb_unmap_window(dpy, window.?.value.id, &return_cookie);
-
-                        var new_node = try target_group.windows.createNode(window.?.value.id, allocator);
-                        target_group.windows.prepend(new_node);
-                        window.?.value.group_index = target_group.index;
-
-                        screen_node = screens.first;
-                        screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
-                            var screen_group_node = screen_node.?.data.groups.first;
-                            while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
-                                if (screen_group_node.?.data == target_group.index) {
-                                    var new_win_node = try screen_node.?.data.windows.createNode(window.?.value.id, allocator);
-                                    screen_node.?.data.windows.prepend(new_win_node);
-
-                                    if (window.?.value.screen_id != screen_node.?.data.id) {
-                                        moveWindowBetweenScreens(dpy, &window.?.value, window_screen.*, screen_node.?.data);
+                            var screen_node = screens.first;
+                            screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
+                                var window_node = screen_node.?.data.windows.first;
+                                while (window_node != null) : (window_node = window_node.?.next) {
+                                    if (window_node.?.data == window.?.value.id) {
+                                        unfocusWindow(dpy, window.?.value.id, g_default_border_color);
+                                        screen_node.?.data.windows.remove(window_node.?);
+                                        screen_node.?.data.windows.destroyNode(window_node.?, allocator);
+                                        break :screen_loop;
                                     }
-                                    // raiseWindow(dpy, window.?.value.id);
-                                    _ = _xcb_map_window(dpy, window.?.value.id, &return_cookie);
-                                    break :screen_loop;
                                 }
                             }
-                        }
+
+                            _ = _xcb_unmap_window(dpy, window.?.value.id, &return_cookie);
+
+                            var new_node = try target_group.windows.createNode(window.?.value.id, allocator);
+                            target_group.windows.prepend(new_node);
+                            window.?.value.group_index = target_group.index;
+
+                            screen_node = screens.first;
+                            screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
+                                var screen_group_node = screen_node.?.data.groups.first;
+                                while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
+                                    if (screen_group_node.?.data == target_group.index) {
+                                        var new_win_node = try screen_node.?.data.windows.createNode(window.?.value.id, allocator);
+                                        screen_node.?.data.windows.prepend(new_win_node);
+
+                                        if (window.?.value.screen_id != screen_node.?.data.id) {
+                                            moveWindowBetweenScreens(dpy, &window.?.value, window_screen.*, screen_node.?.data);
+                                        }
+                                        // raiseWindow(dpy, window.?.value.id);
+                                        _ = _xcb_map_window(dpy, window.?.value.id, &return_cookie);
+                                        break :screen_loop;
+                                    }
+                                }
+                            }
 
 
+                            // TODO: Or focus new window the screen the source/target
+                            // (var window_screen) window was ???
+                            if (getActiveMouseScreen(screens).windows.first) |new_focus| {
+                                focusWindow(dpy, new_focus.data, g_active_border_color);
+                            }
 
-
-                        // TODO: Or focus new window the screen the source/target
-                        // (var window_screen) window was ???
-                        if (getActiveMouseScreen(screens).windows.first) |new_focus| {
-                            focusWindow(dpy, new_focus.data, active_border_color);
-                        }
-
-                        break;
+                            break;
+                            }
                         }
                     }
 debugScreens(screens, windows);
@@ -869,6 +1077,7 @@ debugGroups(groups);
 
                 }
 
+                xcb_key_symbols_free(key_symbols);
                 _ = xcb_flush(dpy);
             },
             XCB_KEY_RELEASE => {
@@ -895,8 +1104,8 @@ debugGroups(groups);
                 if (focused_window == win.?.value.id) continue;
 
                 warn("change window\n");
-                unfocusWindow(dpy, focused_window, default_border_color);
-                focusWindow(dpy, win.?.value.id, active_border_color);
+                unfocusWindow(dpy, focused_window, g_default_border_color);
+                focusWindow(dpy, win.?.value.id, g_active_border_color);
 
                 // prependWindowToScreen()
                 var win_node = active_screen.windows.first;
@@ -1029,42 +1238,44 @@ fn debugMouse(dpy: ?*xlib.Display, default_root: xlib.Window) void {
 
 
 
-fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, border_width: i32, screen_padding: i32, window_min_width: i32, window_min_height: i32, screen: *Screen) WindowGeometry {
-    var screen_width:i32 = screen.width;
-    var screen_height:i32 = screen.height;
+fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Screen) WindowGeometry {
+    var screen_width: i32 = screen.width;
+    var screen_height: i32 = screen.height;
     var new_x = x - screen.x;
     var new_y = y - screen.y;
     var new_width = width;
-    var new_height = height;        
+    var new_height = height;
+    const bw = @intCast(i32, g_border_width);
+    const sp = @intCast(i32, g_screen_padding);
 
 
     // Width and x coordinate
-    var win_total_width = new_width + 2 * border_width;
+    var win_total_width = new_width + 2 * bw;
 
     if ((new_x + win_total_width) >= screen_width) {
         new_x = new_x - (new_x + win_total_width - screen_width);
-        new_width = screen_width - 2 * border_width - (x - screen.x) - screen_padding;
+        new_width = screen_width - 2 * bw - (x - screen.x) - sp;
     }
 
-    new_x = std.math.max(screen_padding, new_x - screen_padding) + screen.x;
+    new_x = std.math.max(sp, new_x - sp) + screen.x;
 
-    if (new_width < window_min_width) {
-        new_width = window_min_width;
+    if (new_width < @intCast(i32, g_window_min_width)) {
+        new_width = g_window_min_width;
     }
 
 
     // Height and y coordinate
-    var win_total_height = new_height + 2 * border_width;
+    var win_total_height = new_height + 2 * bw;
 
     if ((new_y + win_total_height) >= screen_height) {
         new_y = new_y - (new_y + win_total_height - screen_height);
-        new_height = screen_height - 2 * border_width - (y - screen.y) - screen_padding;
+        new_height = screen_height - 2 * bw - (y - screen.y) - sp;
     }
 
-    new_y = std.math.max(screen_padding, new_y - screen_padding) + screen.y;
+    new_y = std.math.max(sp, new_y - sp) + screen.y;
 
-    if (new_height < window_min_height) {
-        new_height = window_min_height;
+    if (new_height < @intCast(i32, g_window_min_height)) {
+        new_height = g_window_min_height;
     }
 
     return WindowGeometry {
@@ -1075,44 +1286,46 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, border_width:
     };
 }
 
-fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen, border_width: i32, screen_padding: i32) WindowGeometry {
+fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) WindowGeometry {
     var screen_width:i32 = screen.width;
     var screen_height:i32 = screen.height;
     var x:i32 = w_attr.x - screen.x;
     var y:i32 = w_attr.y - screen.y;
     var width:i32 = w_attr.width;
     var height:i32 = w_attr.height;        
+    const bw = @intCast(i32, g_border_width);
+    const sp = @intCast(i32, g_screen_padding);
 
     // Width and x coordinate
-    var win_total_width = width + 2 * border_width;
+    var win_total_width = width + 2 * bw;
 
     if (win_total_width >= screen_width) {
-        width = screen_width - 2 * screen_padding;
+        width = screen_width - 2 * sp;
     }
 
-    win_total_width = width + 2 * border_width;
+    win_total_width = width + 2 * bw;
 
     if ((x + win_total_width) >= screen_width) {
-        x = x - (x + win_total_width - screen_width) - screen_padding;
+        x = x - (x + win_total_width - screen_width) - sp;
     }
 
-    x = std.math.max(screen_padding, x) + screen.x;
+    x = std.math.max(sp, x) + screen.x;
 
 
     // Height and y coordinate
-    var win_total_height = height + 2 * border_width;
+    var win_total_height = height + 2 * bw;
 
     if (win_total_height >= screen_height) {
-        height = screen_height - 2 * screen_padding;
+        height = screen_height - 2 * sp;
     }
 
-    win_total_height = height + 2 * border_width;
+    win_total_height = height + 2 * bw;
 
     if ((y + win_total_height) >= screen_height) {
-        y = y - (y + win_total_height - screen_height) - screen_padding;
+        y = y - (y + win_total_height - screen_height) - sp;
     }
 
-    y = std.math.max(screen_padding, y) + screen.y;
+    y = std.math.max(sp, y) + screen.y;
 
     return WindowGeometry {
         .x = x,
@@ -1301,6 +1514,9 @@ fn debugGroups(groups: ArrayList(Group)) void {
 
 fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, group_strings: []const [*]const u8) void {
     var return_void_pointer: xcb_void_cookie_t = undefined;
+    var key_symbols = xcb_key_symbols_alloc(dpy);
+    var keysym: xlib.KeySym = undefined;
+    var keycode: xcb_keycode_t = undefined;
 
     _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_1, _XCB_MOD_MASK_1, &return_void_pointer);
 
@@ -1310,12 +1526,28 @@ fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, group_strings:
 
     _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_3, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, &return_void_pointer);
 
+    // Window navigation
+    keysym = xlib.XStringToKeysym(c"h");
+    keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
+        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+
+    keysym = xlib.XStringToKeysym(c"j");
+    keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
+        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+
+    keysym = xlib.XStringToKeysym(c"k");
+    keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
+        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+
+    keysym = xlib.XStringToKeysym(c"l");
+    keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
+        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+
 
     // Window movement between groups
-    var key_symbols = xcb_key_symbols_alloc(dpy);
     for (group_strings) |char| {
-        var keysym = xlib.XStringToKeysym(char);
-        var keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
+        keysym = xlib.XStringToKeysym(char);
+        keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
 
         _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
     }
@@ -1323,13 +1555,22 @@ fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, group_strings:
     xcb_key_symbols_free(key_symbols);
 }
 
-fn configureWindow(dpy: ?*xcb_connection_t, win: xcb_window_t, border_width: u16, border_color: u32) void {
+// TODO: remove width and height after window navigation is done
+fn configureWindow(dpy: ?*xcb_connection_t, win: xcb_window_t) void {
     var i: u8 = 0;
     var config_mask: u16 = 0;
-    var config_values: [1]u32 = undefined;
+    var config_values: [3]u32 = undefined; // TODO
+
+    config_mask = config_mask | _XCB_CONFIG_WINDOW_WIDTH;
+    config_values[i] = 200;
+    i += 1;
+
+    config_mask = config_mask | _XCB_CONFIG_WINDOW_HEIGHT;
+    config_values[i] = 200;
+    i += 1;
 
     config_mask = config_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
-    config_values[i] = border_width;
+    config_values[i] = g_border_width;
     i += 1;
 
     var return_pointer: xcb_void_cookie_t = undefined;
@@ -1337,18 +1578,18 @@ fn configureWindow(dpy: ?*xcb_connection_t, win: xcb_window_t, border_width: u16
 
     var return_cookie: xcb_void_cookie_t = undefined;
     const attr_mask = _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK;
-    var attr_values = []u32{border_color, _XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_BUTTON_PRESS};
+    var attr_values = []u32{g_default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_BUTTON_PRESS};
     _ = _xcb_change_window_attributes(dpy, win, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 }
 
 
 
 // TODO: bad name. resizing and moving happens in bounds
-fn resizeAndMoveWindow(dpy: ?*xcb_connection_t, win: xcb_window_t, active_screen: *Screen, screen_padding: u16, border_width: u16) void {
+fn resizeAndMoveWindow(dpy: ?*xcb_connection_t, win: xcb_window_t, active_screen: *Screen) void {
     var return_geo: xcb_get_geometry_cookie_t = undefined;
     _ = _xcb_get_geometry(dpy, win, &return_geo);
     var geo = xcb_get_geometry_reply(dpy, return_geo, null);
-    var new_geo = getWindowGeometryInside(geo.?[0], active_screen, border_width, screen_padding);
+    var new_geo = getWindowGeometryInside(geo.?[0], active_screen);
 
     var win_mask: u16 = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y | _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
     var win_values = []i32{new_geo.x, new_geo.y, new_geo.width, new_geo.height};
@@ -1385,6 +1626,51 @@ fn moveWindowBetweenScreens(dpy: ?*xcb_connection_t, window_info: *Window, sourc
     resizeWindow(dpy, window_info.id, @floatToInt(u32, new_width), @floatToInt(u32, new_height));
 
     window_info.screen_id = dest_screen.id;
+}
+
+fn pointInTriangle(p: Point, a: Point, b: Point, c: Point) bool {
+    var c_a_y = c.y - a.y;
+    var c_a_x = c.x - a.x;
+    var p_a_y = p.y - a.y;
+    var b_a_y = b.y - a.y;
+
+    var w1_top = a.x * c_a_y + p_a_y * c_a_x - p.x * c_a_y;
+    var w1_bottom = b_a_y * c_a_x - (b.x - a.x) * c_a_y;
+    var w1 = @intToFloat(f32, w1_top) / @intToFloat(f32, w1_bottom);
+
+    var w2_top = @intToFloat(f32, p.y - a.y) - w1 * @intToFloat(f32, b_a_y);
+    var w2 = w2_top / @intToFloat(f32, c_a_y);
+    warn("w1: {} | w2: {}\n", w1, w2);
+    return w1 >= 0 and w2 >= 0;
+}
+
+
+fn changeClosestWindow(win_id: xcb_window_t, win_geo: *struct_xcb_get_geometry_reply_t, win_center: Point, id: xcb_window_t, geo: *struct_xcb_get_geometry_reply_t, closest_win: ?xcb_window_t, closest_win_distance: u32, t1: Point, t2: Point) !i32 {
+    var closest_win_point = Point{
+        .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
+        .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
+    };
+
+    warn("{}\n", closest_win_point);
+    if (pointInTriangle(closest_win_point, win_center, t1, t2)) {
+        var new_distance = blk: {
+            var p1 = try std.math.powi(i32, win_geo.x - closest_win_point.x, 2);
+            var p2 = try std.math.powi(i32, win_geo.y - closest_win_point.y, 2);
+            break :blk std.math.sqrt(p1 + p2);
+        };
+
+        warn("{} {}\n", id, new_distance);
+
+        // TODO: test last two conditions
+        if ((new_distance < closest_win_distance)
+            or (new_distance == closest_win_distance and id > closest_win.?)
+            or (new_distance == 0 and id > win_id)) {
+            return @intCast(i32, new_distance);
+        }
+
+    }
+
+    return -1;
 }
 
 

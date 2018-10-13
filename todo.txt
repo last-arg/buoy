@@ -1,8 +1,20 @@
-Moving group from one monitor to another:
-- First check if there are any windows in group.
-- If there are check the first window's screen_index against target screen index.
-Or/And compare screen width and height to determine if windows need recalculations
-- Do the recalculations.
-TODO: Take into account if any window side toches a tile border ???
+General:
+Remove/Replace xlib functions if possible: XStringToKeysym
+Try to combine functions getWindowGeometryInside and inBoundsWindowGeometry.
 
 
+Screen:
+A screen is added/remove.
+
+
+Group:
+Group is moved to another screen. Take into account if any window edges
+are touching tiling edge. ???
+
+
+Navigation:
+Windows' scan area. Trapezoid with triagle(inside window).
+
+
+Debugging:
+Move debug functions to its own file.
