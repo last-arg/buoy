@@ -161,3 +161,9 @@ xcb_void_cookie_t *_xcb_free_cursor(xcb_connection_t *connection, xcb_cursor_t c
   return return_pointer;
 }
 
+xcb_void_cookie_t *_xcb_poly_rectangle(xcb_connection_t *conn, xcb_drawable_t drawable, xcb_gcontext_t gc, uint32_t rectangles_len, const xcb_rectangle_t *rectangles, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_poly_rectangle(conn, drawable, gc, rectangles_len,rectangles);
+  *return_pointer = result;
+  return return_pointer;
+}
+

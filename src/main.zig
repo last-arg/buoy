@@ -74,6 +74,7 @@ const _XCB_CONFIG_WINDOW_SIBLING = 32;
 const _XCB_CONFIG_WINDOW_STACK_MODE = 64;
 const _XCB_GRAB_ANY = 0;
 const _XCB_GC_FOREGROUND = 4;
+const _XCB_GC_FUNCTION = 1;
 const _XCB_CW_BORDER_PIXEL = 8;
 
 
@@ -122,17 +123,25 @@ var g_active_border_color: u32 = undefined;
 var g_screen_padding: u16 = 0;
 var g_window_min_width: u16= 100; // NOTE: without border
 var g_window_min_height: u16 = 100; // NOTE: without border
+var g_grid_rows: u8 = 5;
+var g_grid_cols: u8 = 4;
+var g_grid_total: u16 = undefined;
+var g_grid_color: u32 = undefined;
+var g_grid_show: bool = true;
 
 
 pub fn main() !void {
+    var dpy = xcb_connect(null, null);
+    if (xcb_connection_has_error(dpy) > 0) return error.FailedToOpenDisplay;
+
     // ------- CONFIG -------
     var group_count: u8 = 10;
+    g_grid_total = g_grid_rows * g_grid_cols;
 
     // TODO: Change/Add different allocator(s)
     const allocator = std.heap.c_allocator;
 
-    var dpy = xcb_connect(null, null);
-    if (xcb_connection_has_error(dpy) > 0) return error.FailedToOpenDisplay;
+    const root_gc_id = xcb_generate_id(dpy);
 
     var return_screen: xcb_screen_iterator_t = undefined;
     _ = _xcb_setup_roots_iterator(xcb_get_setup(dpy), &return_screen);
@@ -178,14 +187,18 @@ pub fn main() !void {
     // Set colors
     var return_grey_color_cookie: xcb_alloc_named_color_cookie_t = undefined;
     var return_blue_color_cookie: xcb_alloc_named_color_cookie_t = undefined;
+    var return_grid_color_cookie: xcb_alloc_named_color_cookie_t = undefined;
     var default_color_cookie = _xcb_alloc_named_color(dpy, screen_data.default_colormap, 4, c"grey", &return_grey_color_cookie);
+    var default_color_reply = xcb_alloc_named_color_reply(dpy, return_grey_color_cookie, null);
 
     var active_color_cookie = _xcb_alloc_named_color(dpy, screen_data.default_colormap, 4, c"blue", &return_blue_color_cookie);
-    var default_color_reply = xcb_alloc_named_color_reply(dpy, return_grey_color_cookie, null);
     var active_color_reply = xcb_alloc_named_color_reply(dpy, return_blue_color_cookie, null);
+    var g_grid_color_cookie = _xcb_alloc_named_color(dpy, screen_data.default_colormap, 3, c"red", &return_grid_color_cookie);
+    var g_grid_color_reply = xcb_alloc_named_color_reply(dpy, return_grid_color_cookie, null);
 
     g_default_border_color = default_color_reply.?[0].pixel;
     g_active_border_color = active_color_reply.?[0].pixel;
+    g_grid_color = g_grid_color_reply.?[0].pixel;
 
 
 
@@ -252,7 +265,6 @@ pub fn main() !void {
             if (!is_set_has_mouse and has_mouse) {
                 is_set_has_mouse = true;
             }
-            warn("{}\n", has_mouse);
             var screen = Screen {
                 // NOTE: Xephyr test environment doesn't have primary monitor
                 .has_mouse = has_mouse,
@@ -270,6 +282,9 @@ pub fn main() !void {
 
             var node_ptr = try screens.createNode(screen, allocator);
             screens.append(node_ptr);
+
+            var rects = try getGridRectangles(allocator, screen);
+            drawScreenGrid(dpy, screen_root, root_gc_id, rects);
         }
 
         // TODO: might have to do this for another methods screen/monitor detection ???
@@ -1163,6 +1178,9 @@ debugGroups(groups);
                 _ = xcb_flush(dpy);
             }
         }
+
+
+
     }
 }
 
@@ -1712,6 +1730,55 @@ pub extern fn _xcb_create_glyph_cursor(c: ?*xcb_connection_t, cid: xcb_cursor_t,
 
 pub extern fn _xcb_free_cursor(c: ?*xcb_connection_t, cursor: xcb_cursor_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
+pub extern fn _xcb_poly_rectangle(c: ?*xcb_connection_t, drawable: xcb_drawable_t, gc: xcb_gcontext_t, rectangles_len: u32, rectangles: ?[*]const xcb_rectangle_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
 
 
+fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
+    var gc_rects = ArrayList(xcb_rectangle_t).init(allocator);
+    defer gc_rects.deinit();
+
+    const tile_width = @divTrunc(screen.width, g_grid_cols);
+    const tile_height = @divTrunc(screen.height, g_grid_rows);
+    warn("{}\n", tile_width);
+    warn("{}\n", tile_height);
+
+    var row = u8(0);
+    while (row < g_grid_rows) : (row+=1) {
+        var col = u8(0);
+        while (col < g_grid_cols) : (col+=1) {
+            var rect = xcb_rectangle_t{
+                .x = screen.x + @intCast(i16, tile_width * col),
+                .y = screen.y + @intCast(i16, tile_height * row),
+                .width = tile_width - 1,
+                .height = tile_height - 1,
+            };
+
+            try gc_rects.append(rect);
+        }
+    }
+
+    return gc_rects.toOwnedSlice();
+}
+
+
+fn drawScreenGrid(dpy: ?*xcb_connection_t, screen_root: xcb_window_t, root_gc_id: xcb_gcontext_t, rects: []xcb_rectangle_t) void {
+    var return_void: xcb_void_cookie_t = undefined;
+    const gc_mask = _XCB_GC_FOREGROUND;
+    const gc_values = []u32{g_grid_color};
+    _ = _xcb_create_gc(dpy, root_gc_id, screen_root, gc_mask, @ptrCast(?*const c_void, &gc_values), &return_void);
+
+    _ = _xcb_poly_rectangle(dpy, screen_root, root_gc_id, g_grid_total, @ptrCast(?[*]xcb_rectangle_t, rects.ptr), &return_void);
+    _ = xcb_flush(dpy);
+}
+
+fn drawAllScreenGrids(dpy: ?*xcb_connection_t, allocator: *Allocator, screens: LinkedList(Screen), screen_root: xcb_window_t, root_gc_id: xcb_gcontext_t) !void {
+    if (g_grid_show) {
+        var screen_node = screens.first;
+        while (screen_node != null) : (screen_node = screen_node.?.next) {
+            // Draw screens' grids
+            var rects = try getGridRectangles(allocator, screen_node.?.data);
+            drawScreenGrid(dpy, screen_root, root_gc_id, rects);
+        }
+    }
+}
