@@ -143,27 +143,16 @@ pub fn main() !void {
 
     var return_cookie: xcb_void_cookie_t = undefined;
 
-    // TODO: remove cursor creation ???
-    // Instead let user set cursor using xsetroot
-    // Create cursor
-    var font_id = xcb_generate_id(dpy);
-    _ = _xcb_open_font(dpy, font_id, 6, c"cursor", &return_cookie);
-
-    var cursor_id = xcb_generate_id(dpy);
-    _ = _xcb_create_glyph_cursor(dpy, cursor_id, font_id, font_id,
-                             68, 68 + 1,
-                             0, 0, 0,
-                             0xffff, 0xffff, 0xffff, &return_cookie);
-
     var value_list = []c_uint{
         _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT
         // | _XCB_EVENT_MASK_EXPOSURE
         // | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY
         | _XCB_EVENT_MASK_POINTER_MOTION,
-        cursor_id
     };
-    _ = _xcb_change_window_attributes(dpy, screen_root, _XCB_CW_EVENT_MASK | _XCB_CW_CURSOR, @ptrCast(?*const c_void, &value_list), &return_cookie);
-    _ = _xcb_free_cursor(dpy, cursor_id, &return_cookie);
+
+    const root_attr_mask = _XCB_CW_EVENT_MASK;
+    _ = _xcb_change_window_attributes(dpy, screen_root, root_attr_mask, @ptrCast(?*const c_void, &value_list), &return_cookie);
+    // _ = _xcb_free_cursor(dpy, cursor_id, &return_cookie);
 
 
     // Set keyboard events
@@ -688,17 +677,15 @@ warn("{}\n", e);
 
                 const key_symbols = xcb_key_symbols_alloc(dpy);
                 const keysym = xcb_key_press_lookup_keysym(key_symbols, @ptrCast(?[*]xcb_key_press_event_t, &ev), 0);
+                xcb_key_symbols_free(key_symbols);
 
                 if (e.state == _XCB_MOD_MASK_1) {
-                    const keysym_left = @intCast(u32, xlib.XStringToKeysym(c"h"));
-                    const keysym_up = @intCast(u32, xlib.XStringToKeysym(c"k"));
-                    const keysym_right = @intCast(u32, xlib.XStringToKeysym(c"l"));
-                    const keysym_down = @intCast(u32, xlib.XStringToKeysym(c"j"));
+                    const is_left = keysym == @intCast(u32, xlib.XStringToKeysym(c"h"));
+                    const is_up = keysym == @intCast(u32, xlib.XStringToKeysym(c"k"));
+                    const is_right = keysym == @intCast(u32, xlib.XStringToKeysym(c"l"));
+                    const is_down = keysym == @intCast(u32, xlib.XStringToKeysym(c"j"));
 
-                    if (keysym == keysym_left
-                        or (keysym == keysym_up)
-                        or (keysym == keysym_right)
-                        or (keysym == keysym_down)) {
+                    if (is_left or is_up or is_right or is_down) {
 
                         var return_geo: xcb_get_geometry_cookie_t = undefined;
                         _ = _xcb_get_geometry(dpy, e.event, &return_geo);
@@ -751,7 +738,7 @@ warn("{}\n", e);
                             .x = undefined,
                             .y = undefined,
                         };
-                        if (keysym_left == keysym) {
+                        if (is_left) {
                             t1 = Point{
                                 .x = win_center.x - largest_distance,
                                 .y = win_center.y - largest_distance,
@@ -760,7 +747,7 @@ warn("{}\n", e);
                                 .x = win_center.x - largest_distance,
                                 .y = win_center.y + largest_distance,
                             };
-                        } else if (keysym_up == keysym) {
+                        } else if (is_up) {
                             t1 = Point{
                                 .x = win_center.x - largest_distance,
                                 .y = win_center.y - largest_distance,
@@ -769,7 +756,7 @@ warn("{}\n", e);
                                 .x = win_center.x + largest_distance,
                                 .y = win_center.y - largest_distance,
                             };
-                        } else if (keysym_right == keysym) {
+                        } else if (is_right) {
                             t1 = Point{
                                 .x = win_center.x + largest_distance,
                                 .y = win_center.y - largest_distance,
@@ -778,7 +765,7 @@ warn("{}\n", e);
                                 .x = win_center.x + largest_distance,
                                 .y = win_center.y + largest_distance,
                             };
-                        } else if (keysym_down == keysym) {
+                        } else if (is_down) {
                             t1 = Point{
                                 .x = win_center.x - largest_distance,
                                 .y = win_center.y + largest_distance,
@@ -789,25 +776,54 @@ warn("{}\n", e);
                             };
                         }
 
-
-                        warn("{}\n",win_center);
-                        warn("{}\n",t1);
-                        warn("{}\n",t2);
-
                         var window_node = screen.windows.first.?.next;
-                        var closest_win: ?xcb_window_t = null;
-                        var closest_win_distance: u16 = undefined;
+                        // TODO: set it to current focused window
+                        var closest_win: xcb_window_t = win.?.value.id;
+                        // TODO: set it to u16 max
+                        var closest_win_distance: u16 = 10000;
                         while (window_node != null) : (window_node = window_node.?.next) {
                             _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
                             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
-                            const result = try changeClosestWindow(win.?.value.id, win_geo, win_center, window_node.?.data, geo, closest_win, closest_win_distance, t1, t2);
-                            warn("check window\n");
+                            var closest_win_point = Point{
+                                .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
+                                .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
+                            };
 
-                            if (result > -1) {
-                                closest_win = window_node.?.data;
-                                closest_win_distance = @intCast(u16, result);
+                            if (pointInTriangle(closest_win_point, win_center, t1, t2)) {
+                                var new_distance = blk: {
+                                    var p1 = try std.math.powi(i32, win_center.x - closest_win_point.x, 2);
+                                    var p2 = try std.math.powi(i32, win_center.y - closest_win_point.y, 2);
+                                    break :blk std.math.sqrt(p1 + p2);
+                                };
+
+                                warn("current id: {} | next id: {} | dist: {}\n", win.?.value.id, window_node.?.data, new_distance);
+
+                                if (new_distance == 0) {
+                                    // @continue
+                                    // TODO: condition isn't working.
+                                    // inital closest_win value is set to current window.
+                                    if ((is_right or is_down) and window_node.?.data > win.?.value.id) {
+                                        closest_win = window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                    } else if ((is_left or is_up) and window_node.?.data < win.?.value.id) {
+                                        closest_win = window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                    }
+                                } else if (new_distance == closest_win_distance) {
+                                    if ((is_right or is_down) and window_node.?.data > win.?.value.id and window_node.?.data < closest_win) {
+                                        closest_win = window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                    } else if ((is_left or is_up) and window_node.?.data < win.?.value.id and window_node.?.data > closest_win) {
+                                        closest_win = window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                    }
+                                } else if (new_distance < closest_win_distance) {
+                                    closest_win = window_node.?.data;
+                                    closest_win_distance = new_distance;
+                                } 
                             }
+
                         }
 
                         // TODO: Improve screen checking. ??? Edge case
@@ -817,15 +833,15 @@ warn("{}\n", e);
                         // Edge case: Window spans multiple screens and window's
                         // midpoint is located on the previous screen.
                         var screen_node = screens.first;
-                        while (screen_node != null) : (screen_node = screen_node.?.next) {
+                        while (false and screen_node != null) : (screen_node = screen_node.?.next) {
                             if (screen_node.?.data.id == screen.id) continue;
 
                             // @ChangeBasedOnDirection
-                            if (keysym == keysym_left or keysym == keysym_right) {
+                            if (is_left or is_right) {
                                 const bottom_y = (screen.y + @intCast(i32, screen.height));
                                 const screen_midpoint = screen_node.?.data.y + @intCast(i16, screen_node.?.data.height / 2);
                                 if (screen_midpoint > screen.y and screen_midpoint > bottom_y) continue;
-                            } else if (keysym == keysym_up or keysym == keysym_down) {
+                            } else if (is_up or is_down) {
                                 const right_x = (screen.x + @intCast(i32, screen.width));
                                 const screen_midpoint = screen_node.?.data.x + @intCast(i16, screen_node.?.data.height / 2);
                                 if (screen_midpoint > screen.x and screen_midpoint > right_x) continue;
@@ -839,13 +855,13 @@ warn("{}\n", e);
                                 const y_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
                                 // @ChangeBasedOnDirection
                                 // TODO: precheck keysym_* == keysym outside of loop
-                                if (keysym_left == keysym and x_midpoint > win_center.x) {
+                                if (is_left and x_midpoint > win_center.x) {
                                     continue;
-                                } else if (keysym_up == keysym and y_midpoint < win_center.y) {
+                                } else if (is_up and y_midpoint < win_center.y) {
                                     continue;
-                                } else if (keysym_right == keysym and x_midpoint < win_center.x) {
+                                } else if (is_right and x_midpoint < win_center.x) {
                                     continue;
-                                } else if (keysym_down == keysym and y_midpoint > win_center.y) {
+                                } else if (is_down and y_midpoint > win_center.y) {
                                     continue;
                                 }
 
@@ -855,34 +871,54 @@ warn("{}\n", e);
                                 };
 
                                 const new_distance = blk: {
-                                    var p1 = try std.math.powi(i32, win_geo.x - closest_win_point.x, 2);
-                                    var p2 = try std.math.powi(i32, win_geo.y - closest_win_point.y, 2);
+                                    var p1 = try std.math.powi(i32, win_center.x - closest_win_point.x, 2);
+                                    var p2 = try std.math.powi(i32, win_center.y - closest_win_point.y, 2);
                                     break :blk std.math.sqrt(p1 + p2);
                                 };
+                                warn("screen window dist: {}\n", new_distance);
 
                                 // TODO: test last two conditions
-                                if ((new_distance < closest_win_distance)
-                                    or (new_distance == closest_win_distance and screen_window_node.?.data > closest_win.?)
-                                    or (new_distance == 0 and screen_window_node.?.data > win.?.value.id)) {
+                                // TODO: implement new_distance for all directions
+                                if (new_distance < closest_win_distance) {
                                     closest_win = screen_window_node.?.data;
                                     closest_win_distance = new_distance;
                                     new_screen = &screen_node.?.data;
+                                } else if (new_distance == closest_win_distance) {
+                                    if ((is_left or is_down) and screen_window_node.?.data > closest_win) {
+                                        closest_win = screen_window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                        new_screen = &screen_node.?.data;
+                                    } else if ((is_right or is_up) and screen_window_node.?.data < closest_win) {
+                                        closest_win = screen_window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                        new_screen = &screen_node.?.data;
+                                    }
+                                } else if (new_distance == 0) {
+                                    if ((is_left or is_down) and screen_window_node.?.data > win.?.value.id) {
+                                        closest_win = screen_window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                        new_screen = &screen_node.?.data;
+                                    } else if ((is_right or is_up) and screen_window_node.?.data < win.?.value.id) {
+                                        closest_win = screen_window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                        new_screen = &screen_node.?.data;
+                                    }
                                 }
                             }
 
                         }
 
-                        if (closest_win) |w_id| {
+                        if (closest_win != win.?.value.id) {
                             var screen_window_node = new_screen.windows.first.?.next;
                             while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-                                if (screen_window_node.?.data == w_id) {
+                                if (screen_window_node.?.data == closest_win) {
                                     new_screen.windows.remove(screen_window_node.?);
                                     new_screen.windows.prepend(screen_window_node.?);
                                     break;
                                 }
                             }
                             unfocusWindow(dpy, win.?.value.id, g_default_border_color);
-                            focusWindow(dpy, w_id, g_active_border_color);
+                            focusWindow(dpy, closest_win, g_active_border_color);
                         }
                     } else if (keysym == @intCast(u32, xlib.XStringToKeysym(c"t"))) {
                         warn("open xterm\n");
@@ -1077,7 +1113,6 @@ debugGroups(groups);
 
                 }
 
-                xcb_key_symbols_free(key_symbols);
                 _ = xcb_flush(dpy);
             },
             XCB_KEY_RELEASE => {
@@ -1642,35 +1677,6 @@ fn pointInTriangle(p: Point, a: Point, b: Point, c: Point) bool {
     var w2 = w2_top / @intToFloat(f32, c_a_y);
     warn("w1: {} | w2: {}\n", w1, w2);
     return w1 >= 0 and w2 >= 0;
-}
-
-
-fn changeClosestWindow(win_id: xcb_window_t, win_geo: *struct_xcb_get_geometry_reply_t, win_center: Point, id: xcb_window_t, geo: *struct_xcb_get_geometry_reply_t, closest_win: ?xcb_window_t, closest_win_distance: u32, t1: Point, t2: Point) !i32 {
-    var closest_win_point = Point{
-        .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
-        .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
-    };
-
-    warn("{}\n", closest_win_point);
-    if (pointInTriangle(closest_win_point, win_center, t1, t2)) {
-        var new_distance = blk: {
-            var p1 = try std.math.powi(i32, win_geo.x - closest_win_point.x, 2);
-            var p2 = try std.math.powi(i32, win_geo.y - closest_win_point.y, 2);
-            break :blk std.math.sqrt(p1 + p2);
-        };
-
-        warn("{} {}\n", id, new_distance);
-
-        // TODO: test last two conditions
-        if ((new_distance < closest_win_distance)
-            or (new_distance == closest_win_distance and id > closest_win.?)
-            or (new_distance == 0 and id > win_id)) {
-            return @intCast(i32, new_distance);
-        }
-
-    }
-
-    return -1;
 }
 
 
