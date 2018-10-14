@@ -694,7 +694,7 @@ warn("{}\n", e);
                         const win = windows.get(e.event);
                         const screen = getScreen(win.?.value.screen_id, screens);
                         var new_screen = screen;
-                        // Calculate 'cone' (triangle) points
+
                         const win_center = Point{
                             .x = win_geo.x + @intCast(i16, win_geo.width / 2) + @intCast(i16, g_border_width),
                             .y = win_geo.y + @intCast(i16, win_geo.height / 2) + @intCast(i16, g_border_width),
@@ -777,10 +777,14 @@ warn("{}\n", e);
                         }
 
                         var window_node = screen.windows.first.?.next;
-                        // TODO: set it to current focused window
-                        var closest_win: xcb_window_t = win.?.value.id;
-                        // TODO: set it to u16 max
-                        var closest_win_distance: u16 = 10000;
+                        var closest_win: xcb_window_t = blk: {
+                            if (is_right or is_down) {
+                                break :blk @maxValue(u32);
+                            }
+
+                            break :blk u32(0);
+                        };
+                        var closest_win_distance: u16 = @maxValue(u16);
                         while (window_node != null) : (window_node = window_node.?.next) {
                             _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
                             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
@@ -797,20 +801,7 @@ warn("{}\n", e);
                                     break :blk std.math.sqrt(p1 + p2);
                                 };
 
-                                warn("current id: {} | next id: {} | dist: {}\n", win.?.value.id, window_node.?.data, new_distance);
-
-                                if (new_distance == 0) {
-                                    // @continue
-                                    // TODO: condition isn't working.
-                                    // inital closest_win value is set to current window.
-                                    if ((is_right or is_down) and window_node.?.data > win.?.value.id) {
-                                        closest_win = window_node.?.data;
-                                        closest_win_distance = new_distance;
-                                    } else if ((is_left or is_up) and window_node.?.data < win.?.value.id) {
-                                        closest_win = window_node.?.data;
-                                        closest_win_distance = new_distance;
-                                    }
-                                } else if (new_distance == closest_win_distance) {
+                                if (new_distance == 0 or new_distance == closest_win_distance) {
                                     if ((is_right or is_down) and window_node.?.data > win.?.value.id and window_node.?.data < closest_win) {
                                         closest_win = window_node.?.data;
                                         closest_win_distance = new_distance;
@@ -832,19 +823,19 @@ warn("{}\n", e);
                         // screen and all the next(direction of movement) screens.
                         // Edge case: Window spans multiple screens and window's
                         // midpoint is located on the previous screen.
+                        const screen_bottom_y = (screen.y + @intCast(i32, screen.height));
+                        const screen_right_x = (screen.x + @intCast(i32, screen.width));
                         var screen_node = screens.first;
-                        while (false and screen_node != null) : (screen_node = screen_node.?.next) {
+                        while (screen_node != null) : (screen_node = screen_node.?.next) {
                             if (screen_node.?.data.id == screen.id) continue;
 
                             // @ChangeBasedOnDirection
                             if (is_left or is_right) {
-                                const bottom_y = (screen.y + @intCast(i32, screen.height));
                                 const screen_midpoint = screen_node.?.data.y + @intCast(i16, screen_node.?.data.height / 2);
-                                if (screen_midpoint > screen.y and screen_midpoint > bottom_y) continue;
+                                if (screen_midpoint < screen.y or screen_midpoint > screen_bottom_y) continue;
                             } else if (is_up or is_down) {
-                                const right_x = (screen.x + @intCast(i32, screen.width));
-                                const screen_midpoint = screen_node.?.data.x + @intCast(i16, screen_node.?.data.height / 2);
-                                if (screen_midpoint > screen.x and screen_midpoint > right_x) continue;
+                                const screen_midpoint = screen_node.?.data.x + @intCast(i16, screen_node.?.data.width / 2);
+                                if (screen_midpoint < screen.x or screen_midpoint > screen_right_x) continue;
                             }
 
                             var screen_window_node = screen_node.?.data.windows.first;
@@ -854,7 +845,6 @@ warn("{}\n", e);
                                 const x_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
                                 const y_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
                                 // @ChangeBasedOnDirection
-                                // TODO: precheck keysym_* == keysym outside of loop
                                 if (is_left and x_midpoint > win_center.x) {
                                     continue;
                                 } else if (is_up and y_midpoint < win_center.y) {
@@ -875,40 +865,24 @@ warn("{}\n", e);
                                     var p2 = try std.math.powi(i32, win_center.y - closest_win_point.y, 2);
                                     break :blk std.math.sqrt(p1 + p2);
                                 };
-                                warn("screen window dist: {}\n", new_distance);
 
-                                // TODO: test last two conditions
-                                // TODO: implement new_distance for all directions
-                                if (new_distance < closest_win_distance) {
+                                if (new_distance == 0 or new_distance == closest_win_distance) {
+                                    if ((is_right or is_down) and screen_window_node.?.data > win.?.value.id and screen_window_node.?.data < closest_win) {
+                                        closest_win = screen_window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                    } else if ((is_left or is_up) and screen_window_node.?.data < win.?.value.id and screen_window_node.?.data > closest_win) {
+                                        closest_win = screen_window_node.?.data;
+                                        closest_win_distance = new_distance;
+                                    }
+                                } else if (new_distance < closest_win_distance) {
                                     closest_win = screen_window_node.?.data;
                                     closest_win_distance = new_distance;
-                                    new_screen = &screen_node.?.data;
-                                } else if (new_distance == closest_win_distance) {
-                                    if ((is_left or is_down) and screen_window_node.?.data > closest_win) {
-                                        closest_win = screen_window_node.?.data;
-                                        closest_win_distance = new_distance;
-                                        new_screen = &screen_node.?.data;
-                                    } else if ((is_right or is_up) and screen_window_node.?.data < closest_win) {
-                                        closest_win = screen_window_node.?.data;
-                                        closest_win_distance = new_distance;
-                                        new_screen = &screen_node.?.data;
-                                    }
-                                } else if (new_distance == 0) {
-                                    if ((is_left or is_down) and screen_window_node.?.data > win.?.value.id) {
-                                        closest_win = screen_window_node.?.data;
-                                        closest_win_distance = new_distance;
-                                        new_screen = &screen_node.?.data;
-                                    } else if ((is_right or is_up) and screen_window_node.?.data < win.?.value.id) {
-                                        closest_win = screen_window_node.?.data;
-                                        closest_win_distance = new_distance;
-                                        new_screen = &screen_node.?.data;
-                                    }
-                                }
+                                } 
                             }
 
                         }
 
-                        if (closest_win != win.?.value.id) {
+                        if (closest_win != 0 and closest_win != @maxValue(u32)) {
                             var screen_window_node = new_screen.windows.first.?.next;
                             while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
                                 if (screen_window_node.?.data == closest_win) {
