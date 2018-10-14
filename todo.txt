@@ -12,9 +12,20 @@ Group is moved to another screen. Take into account if any window edges
 are touching tiling edge. ???
 
 
-Navigation:
-Windows' scan area. Trapezoid with triagle(inside window).
+Change window:
+Windows' scan area. Trapezoid with triangle(inside window).
 
 
 Debugging:
-Move debug functions to its own file.
+Move debug functions to its own file. 
+
+
+Move windows:
+{y,u,b,n} 
+  Place windows into corners.
+Shift + {y,u,b,n} 
+  Place window into corner and change window's dimensions to half of screen's available width and height.
+{h,j,k,l} 
+  Move window certain amount. Amount defined in pixels? Amount based on tile width or height?
+Shift + {h,j,k,l} 
+  Move window to the next closest grid line/border. 
