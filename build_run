@@ -1,0 +1,4 @@
+#!/bin/sh
+
+zig build && DISPLAY=:1 ./zig-cache/buoy
+

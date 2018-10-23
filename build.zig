@@ -10,7 +10,7 @@ pub fn build(b: *Builder) void {
 
     const exe = b.addExecutable("buoy", "src/main.zig");
 
-    exe.addCompileFlags([][]const u8 {
+    exe.addCompileFlags([][]const u8.{
         "-std=c99",
     //     "-nostdlib",
     });
@@ -39,12 +39,16 @@ pub fn build(b: *Builder) void {
     b.default_step.dependOn(&exe.step);
     b.installArtifact(exe);
 
-    _ = b.env_map.set("DISPLAY", ":1");
-    const run_step = b.step("run", "Run the app");
-    const run_cmd = b.addCommand(".", b.env_map, [][]const u8{
-        exe.getOutputPath(),
-    });
-    run_step.dependOn(&run_cmd.step);
-    run_cmd.step.dependOn(&exe.step);
+    // var direct_allocator = std.heap.DirectAllocator.init();
+    // defer direct_allocator.deinit();
+    // var my_env_map = BufMap.init(&direct_allocator.allocator);
+    // _ = my_env_map.set("DISPLAY", ":1");
+    // defer my_env_map.deinit();
+    // const run_step = b.step("run", "Run the app");
+    // const run_cmd = b.addCommand(".", b.env_map, [][]const u8.{
+    //     exe.getOutputPath(),
+    // });
+    // run_step.dependOn(&run_cmd.step);
+    // run_cmd.step.dependOn(&exe.step);
 
 }
