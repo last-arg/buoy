@@ -59,3 +59,8 @@ pub extern fn _xcb_create_glyph_cursor(c: ?*xcb_connection_t, cid: xcb_cursor_t,
 pub extern fn _xcb_free_cursor(c: ?*xcb_connection_t, cursor: xcb_cursor_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
 pub extern fn _xcb_poly_rectangle(c: ?*xcb_connection_t, drawable: xcb_drawable_t, gc: xcb_gcontext_t, rectangles_len: u32, rectangles: ?[*]const xcb_rectangle_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_free_gc(c: ?*xcb_connection_t, gc: xcb_gcontext_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
+pub extern fn _xcb_clear_area(c: ?*xcb_connection_t, exposures: u8, window: xcb_window_t, x: i16, y: i16, width: u16, height: u16, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+

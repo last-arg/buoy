@@ -12,64 +12,12 @@ const LinkedList = std.LinkedList;
 const hash_map = std.hash_map;
 const HashMap = std.HashMap;
 
-// const xlib = @import("xlib.zig");
 const xlib = @cImport({
     @cInclude("X11/Xlib.h");
 });
 const xrandr = @import("Xrandr.zig");
 use @import("c_import.zig");
 use @import("xcb_extern.zig");
-
-// NOTE: Add underscore to avoid redefinition error
-const _XCB_EVENT_MASK_BUTTON_PRESS = 4;
-const _XCB_EVENT_MASK_BUTTON_RELEASE = 8;
-const _XCB_MOD_MASK_SHIFT = 1;
-const _XCB_MOD_MASK_1 = 8;
-const _XCB_MOD_MASK_2 = 16;
-const _XCB_GRAB_MODE_SYNC = 0;
-const _XCB_GRAB_MODE_ASYNC = 1;
-const XCB_NONE = 0;
-const XCB_NO_SYMBOL = 0;
-const _XCB_EVENT_MASK_ENTER_WINDOW = 16;
-const _XCB_EVENT_MASK_POINTER_MOTION = 64;
-const _XCB_EVENT_MASK_EXPOSURE = 32768;
-const _XCB_EVENT_MASK_BUTTON_MOTION = 8192;
-const _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY = 524288;
-const _XCB_TIME_CURRENT_TIME = 0;
-const _XCB_STACK_MODE_ABOVE = 0;
-const _XCB_NOTIFY_MODE_NORMAL = 0;
-
-const _XCB_NOTIFY_DETAIL_ANCESTOR = 0;
-const _XCB_NOTIFY_DETAIL_VIRTUAL = 1;
-const _XCB_NOTIFY_DETAIL_INFERIOR = 2;
-const _XCB_NOTIFY_DETAIL_NONLINEAR = 3;
-const _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL = 4;
-
-const _XCB_BUTTON_INDEX_ANY = 0;
-const _XCB_BUTTON_INDEX_1 = 1;
-const _XCB_BUTTON_INDEX_2 = 2;
-const _XCB_BUTTON_INDEX_3 = 3;
-
-const _XCB_CW_BACK_PIXEL = 2;
-const _XCB_CW_EVENT_MASK = 2048;
-const _XCB_CW_CURSOR = 16384;
-const _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT = 1048576;
-const _XCB_CW_BORDER_PIXMAP = 4;
-const _XCB_INPUT_FOCUS_POINTER_ROOT = 1;
-const _XCB_INPUT_FOCUS_PARENT = 2;
-
-const _XCB_CONFIG_WINDOW_X = 1;
-const _XCB_CONFIG_WINDOW_Y = 2;
-const _XCB_CONFIG_WINDOW_WIDTH = 4;
-const _XCB_CONFIG_WINDOW_HEIGHT = 8;
-const _XCB_CONFIG_WINDOW_BORDER_WIDTH = 16;
-const _XCB_CONFIG_WINDOW_SIBLING = 32;
-const _XCB_CONFIG_WINDOW_STACK_MODE = 64;
-const _XCB_GRAB_ANY = 0;
-const _XCB_GC_FOREGROUND = 4;
-const _XCB_GC_FUNCTION = 1;
-const _XCB_CW_BORDER_PIXEL = 8;
-
 
 const Screen = struct.{
     id: u32, 
@@ -108,7 +56,6 @@ const Point = struct.{
 
 const WindowsHashMap = HashMap(c_ulong, Window, getWindowHash, comptime hash_map.getAutoEqlFn(c_ulong));
 
-
 // ------- CONFIG -------
 var g_border_width: u16 = 10;
 var g_default_border_color: u32  = undefined;
@@ -116,6 +63,8 @@ var g_active_border_color: u32 = undefined;
 var g_screen_padding: u16 = 0;
 var g_window_min_width: u16= 100; // NOTE: without border
 var g_window_min_height: u16 = 100; // NOTE: without border
+var g_window_move_x: u16 = 10;
+var g_window_move_y: u16 = 20;
 var g_grid_rows: u8 = 5;
 var g_grid_cols: u8 = 4;
 var g_grid_total: u16 = undefined;
@@ -193,9 +142,6 @@ pub fn main() !void {
     g_active_border_color = active_color_reply.?[0].pixel;
     g_grid_color = g_grid_color_reply.?[0].pixel;
 
-
-
-
     
     // Setup: Screens, Groups, Windows
 
@@ -238,7 +184,6 @@ pub fn main() !void {
         _ = _xcb_query_pointer(dpy, screen_root, &return_pointer);
         var pointer_reply = xcb_query_pointer_reply(dpy, return_pointer, null);
         var pointer = pointer_reply.?[0];
-        warn("{}\n", pointer);
 
         var j: u8 = 0;
         var return_monitors_iter: xcb_randr_monitor_info_iterator_t = undefined;
@@ -277,6 +222,7 @@ pub fn main() !void {
             screens.append(node_ptr);
 
             var rects = try getGridRectangles(allocator, screen);
+            _ = _xcb_clear_area(dpy, 1, screen_root, screen.x, screen.y, screen.width, screen.height, &return_cookie);
             drawScreenGrid(dpy, screen_root, root_gc_id, rects);
         }
 
@@ -687,7 +633,111 @@ warn("{}\n", e);
                 const keysym = xcb_key_press_lookup_keysym(key_symbols, @ptrCast(?[*]xcb_key_press_event_t, &ev), 0);
                 xcb_key_symbols_free(key_symbols);
 
-                if (e.state == _XCB_MOD_MASK_1) {
+                if (e.state == _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT) {
+                    warn("shift move\n");
+                    const is_left = keysym == @intCast(u32, xlib.XStringToKeysym(c"h"));
+                    const is_up = keysym == @intCast(u32, xlib.XStringToKeysym(c"k"));
+                    const is_right = keysym == @intCast(u32, xlib.XStringToKeysym(c"l"));
+                    const is_down = keysym == @intCast(u32, xlib.XStringToKeysym(c"j"));
+
+                    if (is_left or is_up or is_right or is_down) {
+                        // TODO: shift window (left upper corner) out of screen bounds.
+                        // 'Extend' grid out of screen bounds.
+                        // TODO: Make sure part of window stays on screen.
+                        var return_geo: xcb_get_geometry_cookie_t = undefined;
+                        _ = _xcb_get_geometry(dpy, e.event, &return_geo);
+                        const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+
+                        const win = windows.get(e.event);
+                        var screen = getScreen(win.?.value.screen_id, screens);
+
+                        const tile_width: i32 = @divTrunc(screen.width, g_grid_cols);
+                        const tile_height: i32 = @divTrunc(screen.height, g_grid_rows);
+
+                        var new_x = blk: {
+                            var i: u8 = 0;
+                            if (is_left) {
+                                while (i < g_grid_cols) : (i+=1) {
+                                    const edge_1 = screen.x + tile_width * @intCast(i16, i);
+                                    const edge_2 = edge_1 + tile_width;
+                                    if (win_geo.x > edge_1 and win_geo.x <= edge_2) {
+                                        break :blk edge_1;
+                                    }
+                                }
+                            } else if (is_right) {
+                                while (i < g_grid_cols) : (i+=1) {
+                                    const edge_1 = screen.x + tile_width * @intCast(i16, i);
+                                    const edge_2 = edge_1 + tile_width;
+                                    if (win_geo.x >= edge_1 and win_geo.x < edge_2) {
+                                        break :blk edge_2;
+                                    }
+                                }
+                            }
+
+                            break :blk win_geo.x;
+                        };
+                        var new_y = blk: {
+                            var i: u8 = 0;
+                            if (is_up) {
+                                while (i < g_grid_rows) : (i+=1) {
+                                    const edge_1 = screen.y + tile_height * @intCast(i16, i);
+                                    const edge_2 = edge_1 + tile_height;
+                                    if (win_geo.y > edge_1 and win_geo.y <= edge_2) {
+                                        break :blk edge_1;
+                                    }
+                                }
+                            } else if (is_down) {
+                                while (i < g_grid_rows) : (i+=1) {
+                                    const edge_1 = screen.y + tile_height * @intCast(i16, i);
+                                    const edge_2 = edge_1 + tile_height;
+                                    if (win_geo.y >= edge_1 and win_geo.y < edge_2) {
+                                        break :blk edge_2;
+                                    }
+                                }
+                            }
+
+                            break :blk win_geo.y;
+                        };
+
+                        moveWindow(dpy, e.event, new_x, new_y);
+
+
+warn("scn_id: {}\n", getScreenBasedOnCoords(@intCast(i16, new_x), @intCast(i16, new_y), screens).?.id);
+
+                        // TODO: check if window is on a new screen.
+                        // If on new screen, move window to new Screen and Group.
+                    }
+                } else if (e.state == _XCB_MOD_MASK_1 | _XCB_MOD_MASK_CONTROL) {
+                    warn("ctrl move\n");
+                    // TODO: Make sure part of window stays on screen.
+                    const is_left = keysym == @intCast(u32, xlib.XStringToKeysym(c"h"));
+                    const is_up = keysym == @intCast(u32, xlib.XStringToKeysym(c"k"));
+                    const is_right = keysym == @intCast(u32, xlib.XStringToKeysym(c"l"));
+                    const is_down = keysym == @intCast(u32, xlib.XStringToKeysym(c"j"));
+
+                    if (is_left or is_up or is_right or is_down) {
+                        var return_geo: xcb_get_geometry_cookie_t = undefined;
+                        _ = _xcb_get_geometry(dpy, e.event, &return_geo);
+                        const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+
+                        var new_x = win_geo.x + blk: {
+                            if (is_left) break :blk -@intCast(i32, g_window_move_x);
+                            if (is_right) break :blk @intCast(i32, g_window_move_x);
+                            break :blk 0;
+                        };
+                        var new_y = win_geo.y + blk: {
+                            if (is_down) break :blk @intCast(i32, g_window_move_y);
+                            if (is_up) break :blk -@intCast(i32, g_window_move_y);
+                            break :blk 0;
+                        };
+
+                        moveWindow(dpy, e.event, new_x, new_y);
+
+                        // TODO: check if window is on a new screen.
+                        // If on new screen, move window to new Screen and Group.
+                    }
+
+                } else if (e.state == _XCB_MOD_MASK_1) {
                     const is_left = keysym == @intCast(u32, xlib.XStringToKeysym(c"h"));
                     const is_up = keysym == @intCast(u32, xlib.XStringToKeysym(c"k"));
                     const is_right = keysym == @intCast(u32, xlib.XStringToKeysym(c"l"));
@@ -1537,6 +1587,7 @@ fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, group_strings:
     var key_symbols = xcb_key_symbols_alloc(dpy);
     var keysym: xlib.KeySym = undefined;
     var keycode: xcb_keycode_t = undefined;
+    var move_strings = []const [*]const u8.{c"h", c"j", c"k", c"l"};
 
     _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_1, _XCB_MOD_MASK_1, &return_void_pointer);
 
@@ -1547,22 +1598,17 @@ fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, group_strings:
     _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_3, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, &return_void_pointer);
 
     // Window navigation
-    keysym = xlib.XStringToKeysym(c"h");
-    keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
-        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+    for (move_strings) |str| {
+        keysym = xlib.XStringToKeysym(str);
+        keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
+            _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
 
-    keysym = xlib.XStringToKeysym(c"j");
-    keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
-        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+        keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
+            _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
 
-    keysym = xlib.XStringToKeysym(c"k");
-    keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
-        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
-
-    keysym = xlib.XStringToKeysym(c"l");
-    keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
-        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
-
+        keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
+            _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_CONTROL, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+    }
 
     // Window movement between groups
     for (group_strings) |char| {
@@ -1660,7 +1706,6 @@ fn pointInTriangle(p: Point, a: Point, b: Point, c: Point) bool {
 
     var w2_top = @intToFloat(f32, p.y - a.y) - w1 * @intToFloat(f32, b_a_y);
     var w2 = w2_top / @intToFloat(f32, c_a_y);
-    warn("w1: {} | w2: {}\n", w1, w2);
     return w1 >= 0 and w2 >= 0;
 }
 
@@ -1694,12 +1739,17 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
 
 fn drawScreenGrid(dpy: ?*xcb_connection_t, screen_root: xcb_window_t, root_gc_id: xcb_gcontext_t, rects: []xcb_rectangle_t) void {
     var return_void: xcb_void_cookie_t = undefined;
-    const gc_mask = _XCB_GC_FOREGROUND;
-    const gc_values = []u32.{g_grid_color};
+    var gc_mask = u32(_XCB_GC_FOREGROUND);
+    var gc_values = []u32.{g_grid_color};
+    // var pix = xcb_generate_id(dpy);
+    // _ = _xcb_create_pixmap(dpy, 24, pix, screen_root, 600, 500, &return_void);
     _ = _xcb_create_gc(dpy, root_gc_id, screen_root, gc_mask, @ptrCast(?*const c_void, &gc_values), &return_void);
+    // gc_mask = _XCB_GC_FOREGROUND;
+    // gc_values = []u32.{g_default_border_color};
+    // var id = xcb_generate_id(dpy);
+    // _ = _xcb_create_gc(dpy, id, screen_root, gc_mask, @ptrCast(?*const c_void, &gc_values), &return_void);
 
     _ = _xcb_poly_rectangle(dpy, screen_root, root_gc_id, g_grid_total, @ptrCast(?[*]xcb_rectangle_t, rects.ptr), &return_void);
-    _ = xcb_flush(dpy);
 }
 
 fn drawAllScreenGrids(dpy: ?*xcb_connection_t, allocator: *Allocator, screens: LinkedList(Screen), screen_root: xcb_window_t, root_gc_id: xcb_gcontext_t) !void {
