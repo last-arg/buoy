@@ -12,7 +12,10 @@ const LinkedList = std.LinkedList;
 const hash_map = std.hash_map;
 const HashMap = std.HashMap;
 
-const xlib = @import("xlib.zig");
+// const xlib = @import("xlib.zig");
+const xlib = @cImport({
+    @cInclude("X11/Xlib.h");
+});
 const xrandr = @import("Xrandr.zig");
 use @import("c_import.zig");
 use @import("xcb_extern.zig");
@@ -68,7 +71,7 @@ const _XCB_GC_FUNCTION = 1;
 const _XCB_CW_BORDER_PIXEL = 8;
 
 
-const Screen = struct {
+const Screen = struct.{
     id: u32, 
     has_mouse: bool,
     x: i16,
@@ -79,26 +82,26 @@ const Screen = struct {
     windows: LinkedList(xcb_window_t),
 };
 
-const Group = struct {
+const Group = struct.{
     index: u8,
     windows: LinkedList(xcb_window_t),
 };
 
 // TODO: add geometry info to Window ???
-const Window = struct {
+const Window = struct.{
     id: xcb_window_t,
     screen_id: u32, 
     group_index: u8,
 };
 
-const WindowGeometry = struct {
+const WindowGeometry = struct.{
     x: i32,
     y: i32,
     width: i32,
     height: i32,
 };
 
-const Point = struct {
+const Point = struct.{
     x: i32,
     y: i32,
 };
@@ -142,7 +145,7 @@ pub fn main() !void {
 
     var return_cookie: xcb_void_cookie_t = undefined;
 
-    var value_list = []c_uint{
+    var value_list = []c_uint.{
         _XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT
         // | _XCB_EVENT_MASK_EXPOSURE
         // | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY
@@ -155,7 +158,7 @@ pub fn main() !void {
 
 
     // Set keyboard events
-    var group_strings = []const [*]const u8{c"1", c"2", c"3", c"4", c"5", c"6", c"7", c"8", c"9", c"0"};
+    var group_strings = []const [*]const u8.{c"1", c"2", c"3", c"4", c"5", c"6", c"7", c"8", c"9", c"0"};
     {
         var key_symbols = xcb_key_symbols_alloc(dpy);
 
@@ -217,7 +220,7 @@ pub fn main() !void {
     {
         var i: u8 = 0;
         while (i < group_count) : (i += 1) {
-            var group = Group {
+            var group = Group.{
                 .index = i,
                 .windows = LinkedList(xcb_window_t).init(),
             };
@@ -255,7 +258,7 @@ pub fn main() !void {
             if (!is_set_has_mouse and has_mouse) {
                 is_set_has_mouse = true;
             }
-            var screen = Screen {
+            var screen = Screen.{
                 // NOTE: Xephyr test environment doesn't have primary monitor
                 .has_mouse = has_mouse,
                 .id = monitor.name,
@@ -299,7 +302,7 @@ pub fn main() !void {
         var children_count = tree_reply.?[0].children_len;
 
         var event_mask: u32 = _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK;
-        var values = []u32{g_default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW};
+        var values = []u32.{g_default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW};
         var i: u16 = 0;
         while (i < children_count) : (i+=1) {
             warn("{}\n", children.?[i]);
@@ -477,7 +480,7 @@ warn("{}\n", e);
                 resizeAndMoveWindow(dpy, e.window, active_screen);
 
                 var attr_mask: u16 = _XCB_CW_EVENT_MASK;
-                var attr_values = []u32{_XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY};
+                var attr_values = []u32.{_XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY};
                 _ = _xcb_change_window_attributes(dpy, e.window, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 
 
@@ -700,7 +703,7 @@ warn("{}\n", e);
                         const screen = getScreen(win.?.value.screen_id, screens);
                         var new_screen = screen;
 
-                        const win_center = Point{
+                        const win_center = Point.{
                             .x = win_geo.x + @intCast(i16, win_geo.width / 2) + @intCast(i16, g_border_width),
                             .y = win_geo.y + @intCast(i16, win_geo.height / 2) + @intCast(i16, g_border_width),
                         };
@@ -735,47 +738,47 @@ warn("{}\n", e);
                         // @ChangeBasedOnDirection
                         // getPointBasedOnDirection(key) ???
                         //
-                        var t1 = Point{
+                        var t1 = Point.{
                             .x = undefined,
                             .y = undefined,
                         };
-                        var t2 = Point{
+                        var t2 = Point.{
                             .x = undefined,
                             .y = undefined,
                         };
                         if (is_left) {
-                            t1 = Point{
+                            t1 = Point.{
                                 .x = win_center.x - largest_distance,
                                 .y = win_center.y - largest_distance,
                             };
-                            t2 = Point{
+                            t2 = Point.{
                                 .x = win_center.x - largest_distance,
                                 .y = win_center.y + largest_distance,
                             };
                         } else if (is_up) {
-                            t1 = Point{
+                            t1 = Point.{
                                 .x = win_center.x - largest_distance,
                                 .y = win_center.y - largest_distance,
                             };
-                            t2 = Point{
+                            t2 = Point.{
                                 .x = win_center.x + largest_distance,
                                 .y = win_center.y - largest_distance,
                             };
                         } else if (is_right) {
-                            t1 = Point{
+                            t1 = Point.{
                                 .x = win_center.x + largest_distance,
                                 .y = win_center.y - largest_distance,
                             };
-                            t2 = Point{
+                            t2 = Point.{
                                 .x = win_center.x + largest_distance,
                                 .y = win_center.y + largest_distance,
                             };
                         } else if (is_down) {
-                            t1 = Point{
+                            t1 = Point.{
                                 .x = win_center.x - largest_distance,
                                 .y = win_center.y + largest_distance,
                             };
-                            t2 = Point{
+                            t2 = Point.{
                                 .x = win_center.x + largest_distance,
                                 .y = win_center.y + largest_distance,
                             };
@@ -794,7 +797,7 @@ warn("{}\n", e);
                             _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
                             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
-                            var closest_win_point = Point{
+                            var closest_win_point = Point.{
                                 .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
                                 .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
                             };
@@ -860,7 +863,7 @@ warn("{}\n", e);
                                     continue;
                                 }
 
-                                const closest_win_point = Point{
+                                const closest_win_point = Point.{
                                     .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
                                     .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
                                 };
@@ -901,10 +904,10 @@ warn("{}\n", e);
                         }
                     } else if (keysym == @intCast(u32, xlib.XStringToKeysym(c"t"))) {
                         warn("open xterm\n");
-                        var argv = []const []const u8{"xterm"};
+                        var argv = []const []const u8.{"xterm"};
                         var child_result = try child.init(argv, allocator);
                         var env_map = try os.getEnvMap(allocator);
-                        child_result.env_map = env_map;
+                        child_result.env_map = &env_map;
                         _ = try child.spawn(child_result);
                     } else {
                         var groups_slice = groups.toSlice();
@@ -1176,7 +1179,7 @@ debugGroups(groups);
 
 fn raiseWindow(dpy: ?*xcb_connection_t, window: xcb_window_t) void {
     var return_pointer: xcb_void_cookie_t = undefined;
-    const config_values = @ptrCast(?*const c_void, &([]u32{_XCB_STACK_MODE_ABOVE}));
+    const config_values = @ptrCast(?*const c_void, &([]u32.{_XCB_STACK_MODE_ABOVE}));
     _ = _xcb_configure_window(dpy, window, _XCB_CONFIG_WINDOW_STACK_MODE, config_values, &return_pointer);
 }
 
@@ -1184,7 +1187,7 @@ fn raiseWindow(dpy: ?*xcb_connection_t, window: xcb_window_t) void {
 fn moveWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, x: i32, y: i32) void {
     var return_pointer: xcb_void_cookie_t = undefined;
     var win_mask: u16 = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y;
-    var win_values = []i32{x, y};
+    var win_values = []i32.{x, y};
 
     _ = _xcb_configure_window(dpy, window, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
 }
@@ -1193,7 +1196,7 @@ fn moveWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, x: i32, y: i32) voi
 fn resizeWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, width: u32, height: u32) void {
     var return_pointer: xcb_void_cookie_t = undefined;
     var win_mask: u16 = _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
-    var win_values = []u32{width, height};
+    var win_values = []u32.{width, height};
 
     _ = _xcb_configure_window(dpy, window, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
 
@@ -1214,10 +1217,10 @@ fn focusWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, color: u32) void {
     _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, window, _XCB_TIME_CURRENT_TIME, &return_cookie);
 
     const attr_mask = _XCB_CW_BORDER_PIXEL;
-    var attr_values = []u32{color};
+    var attr_values = []u32.{color};
     _ = _xcb_change_window_attributes(dpy, window, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 
-    const config_values = @ptrCast(?*const c_void, &([]u32{_XCB_STACK_MODE_ABOVE}));
+    const config_values = @ptrCast(?*const c_void, &([]u32.{_XCB_STACK_MODE_ABOVE}));
     _ = _xcb_configure_window(dpy, window, _XCB_CONFIG_WINDOW_STACK_MODE, config_values, &return_cookie);
 }
 
@@ -1229,7 +1232,7 @@ fn unfocusWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, color: u32) void
 
     var return_cookie: xcb_void_cookie_t = undefined;
     const attr_mask = _XCB_CW_BORDER_PIXEL;
-    var attr_values = []u32{color};
+    var attr_values = []u32.{color};
     _ = _xcb_change_window_attributes(dpy, focus_reply.?[0].focus, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 }
 
@@ -1295,7 +1298,7 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
         new_height = g_window_min_height;
     }
 
-    return WindowGeometry {
+    return WindowGeometry.{
         .x = new_x,
         .y = new_y,
         .width = new_width,
@@ -1344,7 +1347,7 @@ fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) Wi
 
     y = std.math.max(sp, y) + screen.y;
 
-    return WindowGeometry {
+    return WindowGeometry.{
         .x = x,
         .y = y,
         .width = width,
@@ -1458,7 +1461,7 @@ fn debugScreenWindows(ll: LinkedList(Screen)) void {
 
 
 fn addWindow(allocator: *Allocator, win: xcb_window_t, screen: *Screen, group: *Group, windows: *WindowsHashMap) !void {
-    var new_window = Window {
+    var new_window = Window.{
         .id = win,
         .screen_id = screen.id,
         .group_index = group.index,
@@ -1595,7 +1598,7 @@ fn configureWindow(dpy: ?*xcb_connection_t, win: xcb_window_t) void {
 
     var return_cookie: xcb_void_cookie_t = undefined;
     const attr_mask = _XCB_CW_BORDER_PIXEL | _XCB_CW_EVENT_MASK;
-    var attr_values = []u32{g_default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_BUTTON_PRESS};
+    var attr_values = []u32.{g_default_border_color, _XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_BUTTON_PRESS};
     _ = _xcb_change_window_attributes(dpy, win, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 }
 
@@ -1609,7 +1612,7 @@ fn resizeAndMoveWindow(dpy: ?*xcb_connection_t, win: xcb_window_t, active_screen
     var new_geo = getWindowGeometryInside(geo.?[0], active_screen);
 
     var win_mask: u16 = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y | _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
-    var win_values = []i32{new_geo.x, new_geo.y, new_geo.width, new_geo.height};
+    var win_values = []i32.{new_geo.x, new_geo.y, new_geo.width, new_geo.height};
 
     var return_pointer: xcb_void_cookie_t = undefined;
     _ = _xcb_configure_window(dpy, win, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
@@ -1674,7 +1677,7 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
     while (row < g_grid_rows) : (row+=1) {
         var col = u8(0);
         while (col < g_grid_cols) : (col+=1) {
-            var rect = xcb_rectangle_t{
+            var rect = xcb_rectangle_t.{
                 .x = screen.x + @intCast(i16, tile_width * col),
                 .y = screen.y + @intCast(i16, tile_height * row),
                 .width = tile_width - 1,
@@ -1692,7 +1695,7 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
 fn drawScreenGrid(dpy: ?*xcb_connection_t, screen_root: xcb_window_t, root_gc_id: xcb_gcontext_t, rects: []xcb_rectangle_t) void {
     var return_void: xcb_void_cookie_t = undefined;
     const gc_mask = _XCB_GC_FOREGROUND;
-    const gc_values = []u32{g_grid_color};
+    const gc_values = []u32.{g_grid_color};
     _ = _xcb_create_gc(dpy, root_gc_id, screen_root, gc_mask, @ptrCast(?*const c_void, &gc_values), &return_void);
 
     _ = _xcb_poly_rectangle(dpy, screen_root, root_gc_id, g_grid_total, @ptrCast(?[*]xcb_rectangle_t, rects.ptr), &return_void);
