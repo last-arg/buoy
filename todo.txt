@@ -4,29 +4,32 @@ Try to combine functions getWindowGeometryInside and inBoundsWindowGeometry.
 
 
 Screen:
-A screen is added/remove.
+[ ] A screen is added/remove.
 
 
 Group:
-Group is moved to another screen. Take into account if any window edges
-are touching tiling edge. ???
+[?] Group is moved to another screen. Take into account if any window edges are touching tiling edge. ???
 
 
 Change window:
-Windows' scan area. Trapezoid with triangle(inside window).
-Add multi-color border. Use xcb_create_gc.
+[?] Windows' scan area. Trapezoid with triangle(inside window).
+[ ] Add multi-color border. Use xcb_create_gc.
 
 
 Debugging:
-Move debug functions to its own file. 
+[] Move debug functions to its own file. 
 
 
 Move windows:
-{y,u,b,n} 
-  Place windows into corners.
-Shift + {y,u,b,n} 
-  Place window into corner and change window's dimensions to half of screen's available width and height.
+{y,u,b,n,g} 
+  [ ] Place windows into corners/middle.
+  [ ] Restore window dimesions and position if window alread in corner/middle
+Shift + {y,u,b,n,g} 
+  [?] Place window into corner and change window's dimensions to half of screen's available width and height.
 {h,j,k,l} 
-  Move window certain amount. Amount defined in pixels? Amount based on tile width or height?
+  [*] Move window certain amount. 
+  [*] Base on pixels. 
+  [?] Amount based on tile width or height divided by some number.
 Shift + {h,j,k,l} 
-  Move window to the next closest grid line/border. 
+  [*] Move window to the next closest grid line/border. 
+  [?] Use window middle point as anchor instead top-left. Don't forget to take into account resizing with keyboard. The anchor wouldn't stay in place when resizing. Would have to resize and set window into position it was before resizing. So resizing would change left/right or top/bottom edges' position. Although another option would be not re-anchor after resizing. But this has its own problems. At the moment don't see a good solution to middle point anchor resizing.

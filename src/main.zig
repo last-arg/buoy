@@ -29,11 +29,54 @@ const Screen = struct.{
     height: u16,
     groups: LinkedList(u8),
     windows: LinkedList(xcb_window_t),
+
+    // TODO: add functions
+    // remove/add group
+    // other functions ???
+
+    pub fn removeWindow(self: *Screen, id: xcb_window_t, allocator: *Allocator) bool {
+        var node = self.windows.first;
+        while (node != null) : (node = node.?.next) {
+            if (id == node.?.data) {
+                self.windows.remove(node.?);
+                self.windows.destroyNode(node.?, allocator);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn addWindow(self: *Screen, id: xcb_window_t, allocator: *Allocator) void {
+        const node = self.windows.createNode(id, allocator) catch |err| {
+            warn("Error was raised when trying to add new window to Screen. Error msg: {}\n", err);
+            return;
+        };
+        self.windows.prepend(node);
+    }
 };
 
 const Group = struct.{
     index: u8,
     windows: LinkedList(xcb_window_t),
+
+    pub fn removeWindow(self: *Group, id: xcb_window_t, allocator: *Allocator) void {
+        var node = self.windows.first;
+        while (node != null) : (node = node.?.next) {
+            if (id == node.?.data) {
+                self.windows.remove(node.?);
+                self.windows.destroyNode(node.?, allocator);
+                break;
+            }
+        }
+    }
+
+    pub fn addWindow(self: *Group, id: xcb_window_t, allocator: *Allocator) void {
+        const node = self.windows.createNode(id, allocator) catch |err| {
+            warn("Error was raised when trying to add new window to Group. Error msg: {}\n", err);
+            return;
+        };
+        self.windows.prepend(node);
+    }
 };
 
 // TODO: add geometry info to Window ???
@@ -55,11 +98,11 @@ const Point = struct.{
     y: i32,
 };
 
-const Key = struct.{
-    key: []const u8,
-    mod: u32,
-    func: (fn(xcb_generic_event_t) void),
-};
+// const Key = struct.{
+//     key: []const u8,
+//     mod: u32,
+//     func: (fn(xcb_generic_event_t) void),
+// };
 
 const WindowsHashMap = HashMap(c_ulong, Window, getWindowHash, comptime hash_map.getAutoEqlFn(c_ulong));
 
@@ -67,12 +110,12 @@ const WindowsHashMap = HashMap(c_ulong, Window, getWindowHash, comptime hash_map
 var g_border_width: u16 = 10;
 var g_default_border_color: u32  = undefined;
 var g_active_border_color: u32 = undefined;
-var g_screen_padding: u16 = 0;
+var g_screen_padding: u16 = 5;
 var g_window_min_width: u16= 100; // NOTE: without border
 var g_window_min_height: u16 = 100; // NOTE: without border
 var g_window_move_x: u16 = 50;
 var g_window_move_y: u16 = 40;
-var g_grid_rows: u8 = 5;
+var g_grid_rows: u8 = 4;
 var g_grid_cols: u8 = 4;
 var g_grid_total: u16 = undefined;
 var g_grid_color: u32 = undefined;
@@ -288,6 +331,7 @@ pub fn main() !void {
     }
 
     _ = xcb_flush(dpy);
+
 
     debugScreens(screens, windows);
     debugWindows(windows);
@@ -679,21 +723,15 @@ warn("{}\n", e);
                                 if (new_screen != null and screen.id != new_screen.?.id) {
                                     moveWindow(dpy, e.event, new_x, win_geo.y);
 
-                                    const window_node = screen.windows.first.?;
-                                    screen.windows.remove(window_node);
-                                    screen.windows.destroyNode(window_node, allocator);
-                                    const new_window_node = try new_screen.?.windows.createNode(win.?.value.id, allocator);
-                                    new_screen.?.windows.prepend(new_window_node);
+                                    _ = screen.removeWindow(win.?.value.id, allocator);
+                                    screen.addWindow(win.?.value.id, allocator);
 
                                     var group_index = screen.groups.first.?.data;
                                     var new_group_index = new_screen.?.groups.first.?.data;
 
                                     var groups_slice = groups.toSlice();
-                                    const group_window_node = groups_slice[group_index].windows.first.?;
-                                    groups_slice[group_index].windows.remove(group_window_node);
-                                    groups_slice[group_index].windows.destroyNode(window_node, allocator);
-                                    const new_group_window_node = try groups_slice[new_group_index].windows.createNode(win.?.value.id, allocator);
-                                    groups_slice[new_group_index].windows.prepend(new_group_window_node);
+                                    groups_slice[group_index].removeWindow(win.?.value.id, allocator);
+                                    groups_slice[new_group_index].addWindow(win.?.value.id, allocator);
 
                                     win.?.value.screen_id = new_screen.?.id;
                                     win.?.value.group_index = new_group_index;
@@ -710,21 +748,15 @@ warn("{}\n", e);
                                 if (new_screen != null and screen.id != new_screen.?.id) {
                                     moveWindow(dpy, e.event, win_geo.x, new_y);
 
-                                    const window_node = screen.windows.first.?;
-                                    screen.windows.remove(window_node);
-                                    screen.windows.destroyNode(window_node, allocator);
-                                    const new_window_node = try new_screen.?.windows.createNode(win.?.value.id, allocator);
-                                    new_screen.?.windows.prepend(new_window_node);
+                                    _ = screen.removeWindow(win.?.value.id, allocator);
+                                    screen.addWindow(win.?.value.id, allocator);
 
                                     var group_index = screen.groups.first.?.data;
                                     var new_group_index = new_screen.?.groups.first.?.data;
 
                                     var groups_slice = groups.toSlice();
-                                    const group_window_node = groups_slice[group_index].windows.first.?;
-                                    groups_slice[group_index].windows.remove(group_window_node);
-                                    groups_slice[group_index].windows.destroyNode(window_node, allocator);
-                                    const new_group_window_node = try groups_slice[new_group_index].windows.createNode(win.?.value.id, allocator);
-                                    groups_slice[new_group_index].windows.prepend(new_group_window_node);
+                                    groups_slice[group_index].removeWindow(win.?.value.id, allocator);
+                                    groups_slice[new_group_index].addWindow(win.?.value.id, allocator);
 
                                     win.?.value.screen_id = new_screen.?.id;
                                     win.?.value.group_index = new_group_index;
@@ -835,12 +867,12 @@ warn("{}\n", e);
                         var window_node = screen.windows.first.?.next;
                         var closest_win: xcb_window_t = blk: {
                             if (is_right or is_down) {
-                                break :blk @maxValue(u32);
+                                break :blk std.math.maxInt(u32);
                             }
 
                             break :blk u32(0);
                         };
-                        var closest_win_distance: u16 = @maxValue(u16);
+                        var closest_win_distance: u16 = std.math.maxInt(u16);
                         while (window_node != null) : (window_node = window_node.?.next) {
                             _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
                             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
@@ -938,7 +970,7 @@ warn("{}\n", e);
 
                         }
 
-                        if (closest_win != 0 and closest_win != @maxValue(u32)) {
+                        if (closest_win != 0 and closest_win != std.math.maxInt(u32)) {
                             var screen_window_node = new_screen.windows.first.?.next;
                             while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
                                 if (screen_window_node.?.data == closest_win) {
@@ -1007,17 +1039,11 @@ warn("{}\n", e);
                                 if (group_screen) |screen| {
                                     warn("group existed on another screen");
                                     var window_node = selected_group.windows.last;
-                                    // TODO: See if it is possible to improve loops
                                     while (window_node != null) : (window_node = window_node.?.prev) {
-                                        var screen_window_node = screen.windows.first;
-                                        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-                                            if (screen_window_node.?.data == window_node.?.data) {
-                                                screen.windows.remove(screen_window_node.?);
-                                                screen.windows.destroyNode(screen_window_node.?, allocator);
-                                                _ = _xcb_unmap_window(dpy, window_node.?.data, &return_cookie);
+                                        const id = window_node.?.data;
 
-                                                break;
-                                            }
+                                        if (screen.removeWindow(id, allocator)) {
+                                            _ = _xcb_unmap_window(dpy, window_node.?.data, &return_cookie);
                                         }
                                     }
                                 }
@@ -1027,8 +1053,8 @@ warn("{}\n", e);
                                     // Add and map windows to Screen from Group's windows
                                     var group_window_node = selected_group.windows.last;
                                     while (group_window_node != null) : (group_window_node = group_window_node.?.prev) {
-                                        var new_window_node = try active_screen.windows.createNode(group_window_node.?.data, allocator);
-                                        active_screen.windows.prepend(new_window_node);
+
+                                        active_screen.addWindow(group_window_node.?.data, allocator);
 
                                         var window_info = windows.get(group_window_node.?.data);
                                         if (window_info.?.value.screen_id != active_screen.id) {
@@ -1037,7 +1063,7 @@ warn("{}\n", e);
                                         }
 
                                         raiseWindow(dpy, window_info.?.value.id);
-                                        _ = _xcb_map_window(dpy, new_window_node.data, &return_cookie);
+                                        _ = _xcb_map_window(dpy, group_window_node.?.data, &return_cookie);
 
                                     }
 
@@ -1066,11 +1092,8 @@ debugGroups(groups);
                     const is_right = keysym == @intCast(u32, xlib.XStringToKeysym(c"l"));
                     const is_down = keysym == @intCast(u32, xlib.XStringToKeysym(c"j"));
 
-                    if (is_left or is_up or is_right or is_down) {
-                        // TODO: if the next step takes part of the window out of
-                        // screen put window to the edge of the screen.
-                        // This applies only if when moving to RIGHT or DOWN.
-                        warn("shift move\n");
+                    if (is_left) {
+                        warn("shift left\n");
                         var return_geo: xcb_get_geometry_cookie_t = undefined;
                         _ = _xcb_get_geometry(dpy, e.event, &return_geo);
                         const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
@@ -1078,112 +1101,321 @@ debugGroups(groups);
                         const win = windows.get(e.event);
                         var screen = getScreen(win.?.value.screen_id, screens);
 
-                        const tile_width: i32 = @divTrunc(screen.width, g_grid_cols);
-                        const tile_height: i32 = @divTrunc(screen.height, g_grid_rows);
+                        var new_x = @intCast(i32, win_geo.x);
+                        const tile_width: i32 = @divTrunc(screen.width - 2 * g_screen_padding, g_grid_cols);
 
-                        var new_x = blk: {
-                            if (!is_left and !is_right) break :blk win_geo.x;
-                            const win_total_width = win_geo.width + 2 * g_border_width;
-                            const grid_location = @divTrunc(@intCast(i32, win_total_width), tile_width);
-                            var closest_step = @divFloor(win_geo.x, tile_width);
-                            const start_x = screen.x - grid_location * tile_width;
-                            const end_x = screen.x + @intCast(i32, screen.width);
-                            const is_on_edge = @rem(win_geo.x, tile_width) == 0;
+                        const win_total_width = @intCast(i16, win_geo.width + 2 * g_border_width);
+                        var x_tile_locations = try getGridCols(allocator, screen.*);
+                        defer x_tile_locations.deinit();
 
-                            if (is_left and is_on_edge) {
-                                closest_step -= 1;
-                            } else if (is_right) {
-                                closest_step += 1;
+                        const screen_padding = @intCast(i16, g_screen_padding);
+                        const win_edge_x = win_geo.x + win_total_width;
+                        const win_abs_x = win_geo.x - screen.x - screen_padding;
+                        const win_abs_edge_x = win_abs_x + win_total_width;
+                        var grid_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_x) / @intToFloat(f32, tile_width)));
+                        var grid_edge_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_edge_x) / @intToFloat(f32, tile_width)));
+
+                        var on_left = @rem(win_abs_x, tile_width) == 0;
+                        var on_right = (screen.x + @intCast(i16, screen.width) - screen_padding == win_edge_x) or (@rem(win_abs_edge_x, tile_width) == 0);
+
+                        if (on_left or (@intCast(i32, x_tile_locations.len) == grid_loc)) {
+                            grid_loc -= 1;
+                        }
+
+                        if (on_right or win_total_width < tile_width) {
+                            grid_edge_loc -= 1;
+                        }
+
+                        if (grid_loc >= 0 and grid_loc < @intCast(i32, x_tile_locations.len)) {
+                            new_x = x_tile_locations.at(@intCast(usize, grid_loc));
+                            const new_edge_x = new_x + win_total_width;
+                            const screen_edge = screen.x + @intCast(i32, screen.width) - screen_padding;
+
+                            if ((new_edge_x > screen_edge and win_edge_x < screen_edge)
+                                or (win_edge_x > screen_edge and new_edge_x < screen_edge)
+                            ) {
+                                new_x = screen_edge - win_total_width;
                             }
+                            warn("inside\n");
+                        } else if (grid_edge_loc > 0 and grid_edge_loc < @intCast(i32, x_tile_locations.len)) {
+                            warn("outside\n");
+                            var index = @intCast(usize, grid_edge_loc);
+                            const right_edge = x_tile_locations.at(index);
+                            new_x = right_edge - win_total_width;
+                        } else {
+                            const x = win_geo.x - @intCast(i16, tile_width);
+                            const win_edge_y = win_geo.y + @intCast(i16, win_geo.height + 2 * g_border_width);
+                            const new_screen = getScreenBasedOnCoords(x, win_geo.y + screen_padding, screens) orelse getScreenBasedOnCoords(x, win_edge_y - screen_padding, screens);
+                            warn("screen\n");
 
-                            const closest_x = closest_step * tile_width;
-                            if (closest_x >= start_x and closest_x < end_x) {
-                                break :blk closest_x;
-                            } else {
-                                const closest_edge_x = closest_x + 2 * @intCast(i32, g_border_width);
-                                const x = @intCast(i16, if (is_left) closest_edge_x else closest_x);
-                                const win_edge_y = win_geo.y + @intCast(i16, win_geo.width + 2 * g_border_width);
-                                const new_screen = getScreenBasedOnCoords(x, win_geo.y, screens) orelse getScreenBasedOnCoords(x, win_edge_y, screens);
+                            if (new_screen != null and screen.id != new_screen.?.id) {
+                            warn("screen cont\n");
+                                _ = screen.removeWindow(win.?.value.id, allocator);
+                                new_screen.?.addWindow(win.?.value.id, allocator);
 
-                                if (new_screen != null and screen.id != new_screen.?.id) {
-                                    const window_node = screen.windows.first.?;
-                                    screen.windows.remove(window_node);
-                                    screen.windows.destroyNode(window_node, allocator);
-                                    const new_window_node = try new_screen.?.windows.createNode(win.?.value.id, allocator);
-                                    new_screen.?.windows.prepend(new_window_node);
+                                const group_index = screen.groups.first.?.data;
+                                const new_group_index = new_screen.?.groups.first.?.data;
+                                const groups_slice = groups.toSlice();
 
-                                    var group_index = screen.groups.first.?.data;
-                                    var new_group_index = new_screen.?.groups.first.?.data;
+                                groups_slice[group_index].removeWindow(win.?.value.id, allocator);
+                                groups_slice[new_group_index].addWindow(win.?.value.id, allocator);
 
-                                    var groups_slice = groups.toSlice();
-                                    const group_window_node = groups_slice[group_index].windows.first.?;
-                                    groups_slice[group_index].windows.remove(group_window_node);
-                                    groups_slice[group_index].windows.destroyNode(window_node, allocator);
-                                    const new_group_window_node = try groups_slice[new_group_index].windows.createNode(win.?.value.id, allocator);
-                                    groups_slice[new_group_index].windows.prepend(new_group_window_node);
+                                win.?.value.screen_id = new_screen.?.id;
+                                win.?.value.group_index = new_group_index;
 
-                                    win.?.value.screen_id = new_screen.?.id;
-                                    win.?.value.group_index = new_group_index;
-
-                                    break :blk closest_x;
-                                }
-
+                                new_x = new_screen.?.x + @intCast(i16, new_screen.?.width) - screen_padding - win_total_width;
                             }
+                        }
 
-                            break :blk win_geo.x;
-                        };
-                        var new_y = blk: {
-                            if (!is_up and !is_down) break :blk win_geo.y;
-                            const win_total_height = win_geo.height + 2 * g_border_width;
-                            const grid_location = @divTrunc(@intCast(i32, win_total_height), tile_height);
-                            var closest_step = @divFloor(win_geo.y, tile_height);
-                            const start_y = screen.y - grid_location * tile_height;
-                            const end_y = screen.y + @intCast(i32, screen.height);
-                            const is_on_edge = @rem(win_geo.y, tile_height) == 0;
+                        if (new_x != win_geo.x) {
+                            moveWindow(dpy, e.event, new_x, win_geo.y);
+                        }
+                    } else if (is_right) {
+                        warn("shift right\n");
+                        var return_geo: xcb_get_geometry_cookie_t = undefined;
+                        _ = _xcb_get_geometry(dpy, e.event, &return_geo);
+                        const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
-                            if (is_up and is_on_edge) {
-                                closest_step -= 1;
-                            } else if (is_down) {
-                                closest_step += 1;
+                        const win = windows.get(e.event);
+                        var screen = getScreen(win.?.value.screen_id, screens);
+
+                        var new_x = @intCast(i32, win_geo.x);
+                        const tile_width: i32 = @divTrunc(screen.width - 2 * g_screen_padding, g_grid_cols);
+
+                        const win_total_width = @intCast(i16, win_geo.width + 2 * g_border_width);
+                        const breakpoints = try getGridCols(allocator, screen.*);
+                        defer breakpoints.deinit();
+                        const brkpts_len = @intCast(i32, breakpoints.len);
+
+                        const screen_padding = @intCast(i16, g_screen_padding);
+                        const screen_edge = screen.x + @intCast(i32, screen.width) - screen_padding;
+                        const win_edge_x = win_geo.x + win_total_width;
+                        const win_abs_x = win_geo.x - screen.x - screen_padding;
+                        const win_abs_edge_x = win_abs_x + win_total_width;
+                        var grid_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_x) / @intToFloat(f32, tile_width)));
+                        var grid_edge_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_edge_x) / @intToFloat(f32, tile_width)));
+
+                        const on_left = @rem(win_abs_x, tile_width) == 0;
+                        const on_right = (screen.x + @intCast(i16, screen.width) - screen_padding == win_edge_x) or (@rem(win_abs_edge_x, tile_width) == 0);
+
+                        if (grid_loc != -1 or (on_right and grid_loc == -1)) {
+                            grid_loc += 1;
+                        }
+
+                        if (win_total_width < tile_width and (win_edge_x >= screen_edge or grid_loc == -1)) {
+                            grid_loc += 1;
+                        }
+
+                        grid_edge_loc += 1;
+
+                        if (grid_loc >= 0 and grid_loc < brkpts_len) {
+                            new_x = breakpoints.at(@intCast(usize, grid_loc));
+                            const new_edge_x = new_x + win_total_width;
+
+                            if ((new_edge_x > screen_edge and win_edge_x < screen_edge)
+                                or (win_edge_x > screen_edge and new_edge_x < screen_edge)
+                            ) {
+                                new_x = screen_edge - win_total_width;
                             }
+                            warn("inside\n");
+                        } else if (grid_edge_loc > 0 and grid_edge_loc < brkpts_len) {
+                            warn("outside\n");
+                            var index = @intCast(usize, grid_edge_loc);
+                            const right_edge = breakpoints.at(index);
+                            new_x = right_edge - win_total_width;
+                        } else if (win_total_width < tile_width and grid_loc == brkpts_len) {
+                            warn("window width < tile width\n");
+                            new_x = screen_edge - win_total_width;
+                        } else {
+                            const x = win_geo.x + win_total_width + @intCast(i16, tile_width);
+                            const win_edge_y = win_geo.y + @intCast(i16, win_geo.height + 2 * g_border_width);
+                            const new_screen = getScreenBasedOnCoords(x, win_geo.y + screen_padding, screens) orelse getScreenBasedOnCoords(x, win_edge_y - screen_padding, screens);
+                            warn("screen\n");
 
-                            const closest_y = closest_step * tile_height;
-                            if (closest_y >= start_y and closest_y < end_y) {
-                                break :blk closest_y;
-                            } else {
-                                const closest_edge_y = closest_y + 2 * @intCast(i32, g_border_width);
-                                const y = @intCast(i16, if (is_up) closest_edge_y else closest_y);
-                                const win_edge_x = win_geo.x + @intCast(i16, win_geo.height + 2 * g_border_width);
-                                const new_screen = getScreenBasedOnCoords(win_geo.x, y, screens) orelse getScreenBasedOnCoords(win_edge_x, y, screens);
+                            if (new_screen != null and screen.id != new_screen.?.id) {
+                            warn("screen cont\n");
+                                _ = screen.removeWindow(win.?.value.id, allocator);
+                                new_screen.?.addWindow(win.?.value.id, allocator);
 
-                                if (new_screen != null and screen.id != new_screen.?.id) {
-                                    const window_node = screen.windows.first.?;
-                                    screen.windows.remove(window_node);
-                                    screen.windows.destroyNode(window_node, allocator);
-                                    const new_window_node = try new_screen.?.windows.createNode(win.?.value.id, allocator);
-                                    new_screen.?.windows.prepend(new_window_node);
+                                const group_index = screen.groups.first.?.data;
+                                const new_group_index = new_screen.?.groups.first.?.data;
+                                const groups_slice = groups.toSlice();
 
-                                    var group_index = screen.groups.first.?.data;
-                                    var new_group_index = new_screen.?.groups.first.?.data;
+                                groups_slice[group_index].removeWindow(win.?.value.id, allocator);
+                                groups_slice[new_group_index].addWindow(win.?.value.id, allocator);
 
-                                    var groups_slice = groups.toSlice();
-                                    const group_window_node = groups_slice[group_index].windows.first.?;
-                                    groups_slice[group_index].windows.remove(group_window_node);
-                                    groups_slice[group_index].windows.destroyNode(window_node, allocator);
-                                    const new_group_window_node = try groups_slice[new_group_index].windows.createNode(win.?.value.id, allocator);
-                                    groups_slice[new_group_index].windows.prepend(new_group_window_node);
+                                win.?.value.screen_id = new_screen.?.id;
+                                win.?.value.group_index = new_group_index;
 
-                                    win.?.value.screen_id = new_screen.?.id;
-                                    win.?.value.group_index = new_group_index;
-
-                                    break :blk closest_y;
-                                }
-
+                                new_x = new_screen.?.x + screen_padding;
                             }
-                            break :blk win_geo.y;
-                        };
+                        }
 
-                        moveWindow(dpy, e.event, new_x, new_y);
+                        if (new_x != win_geo.x) {
+                            moveWindow(dpy, e.event, new_x, win_geo.y);
+                        }
+                    } else if (is_up) {
+                        warn("shift up\n");
+                        var return_geo: xcb_get_geometry_cookie_t = undefined;
+                        _ = _xcb_get_geometry(dpy, e.event, &return_geo);
+                        const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+
+                        const win = windows.get(e.event);
+                        var screen = getScreen(win.?.value.screen_id, screens);
+
+                        var new_y = @intCast(i32, win_geo.y);
+                        const tile_height: i32 = @divTrunc(screen.height - 2 * g_screen_padding, g_grid_rows);
+
+                        const win_total_height = @intCast(i16, win_geo.height + 2 * g_border_width);
+                        var breakpoints = try getGridRows(allocator, screen.*);
+                        defer breakpoints.deinit();
+
+                        const screen_padding = @intCast(i16, g_screen_padding);
+                        const win_edge_y = win_geo.y + win_total_height;
+                        const win_abs_y = win_geo.y - screen.y - screen_padding;
+                        const win_abs_edge_y = win_abs_y + win_total_height;
+                        var grid_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_y) / @intToFloat(f32, tile_height)));
+                        var grid_edge_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_edge_y) / @intToFloat(f32, tile_height)));
+
+                        var on_top = @rem(win_abs_y, tile_height) == 0;
+                        var on_bottom = (screen.y + @intCast(i16, screen.height) - screen_padding == win_edge_y) or (@rem(win_abs_edge_y, tile_height) == 0);
+
+                        if (on_top or (@intCast(i32, breakpoints.len) == grid_loc)) {
+                            grid_loc -= 1;
+                        }
+
+                        if (on_bottom or win_total_height < tile_height) {
+                            grid_edge_loc -= 1;
+                        }
+
+                        if (grid_loc >= 0 and grid_loc < @intCast(i32, breakpoints.len)) {
+                            new_y = breakpoints.at(@intCast(usize, grid_loc));
+                            const new_edge_y = new_y + win_total_height;
+                            const screen_edge = screen.y + @intCast(i32, screen.height) - screen_padding;
+
+                            if ((new_edge_y > screen_edge and win_edge_y < screen_edge)
+                                or (win_edge_y > screen_edge and new_edge_y < screen_edge)
+                            ) {
+                                new_y = screen_edge - win_total_height;
+                            }
+                            warn("inside {}\n", new_y);
+                        } else if (grid_edge_loc > 0 and grid_edge_loc < @intCast(i32, breakpoints.len)) {
+                            warn("outside\n");
+                            var index = @intCast(usize, grid_edge_loc);
+                            const bottom_edge = breakpoints.at(index);
+                            new_y = bottom_edge - win_total_height;
+                        } else {
+                            const y = win_geo.y - @intCast(i16, tile_height);
+                            const win_edge_x = win_geo.x + @intCast(i16, win_geo.width + 2 * g_border_width);
+                            const new_screen = getScreenBasedOnCoords(win_geo.x + screen_padding, y, screens) orelse getScreenBasedOnCoords(win_edge_x - screen_padding, y, screens);
+                            warn("screen\n");
+
+                            if (new_screen != null and screen.id != new_screen.?.id) {
+                            warn("screen cont\n");
+                                _ = screen.removeWindow(win.?.value.id, allocator);
+                                new_screen.?.addWindow(win.?.value.id, allocator);
+
+                                const group_index = screen.groups.first.?.data;
+                                const new_group_index = new_screen.?.groups.first.?.data;
+                                const groups_slice = groups.toSlice();
+
+                                groups_slice[group_index].removeWindow(win.?.value.id, allocator);
+                                groups_slice[new_group_index].addWindow(win.?.value.id, allocator);
+
+                                win.?.value.screen_id = new_screen.?.id;
+                                win.?.value.group_index = new_group_index;
+
+                                new_y = new_screen.?.y + @intCast(i16, new_screen.?.height) - screen_padding - win_total_height;
+                            }
+                        }
+
+                        if (new_y != win_geo.y) {
+                            moveWindow(dpy, e.event, win_geo.x, new_y);
+                        }
+                    } else if (is_down) {
+                        warn("shift down\n");
+                        var return_geo: xcb_get_geometry_cookie_t = undefined;
+                        _ = _xcb_get_geometry(dpy, e.event, &return_geo);
+                        const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+
+                        const win = windows.get(e.event);
+                        var screen = getScreen(win.?.value.screen_id, screens);
+
+                        var new_y = @intCast(i32, win_geo.y);
+                        const tile_height: i32 = @divTrunc(screen.height - 2 * g_screen_padding, g_grid_rows);
+
+                        const win_total_height = @intCast(i16, win_geo.height + 2 * g_border_width);
+                        var breakpoints = try getGridRows(allocator, screen.*);
+                        defer breakpoints.deinit();
+                        const brkpts_len = @intCast(i32, breakpoints.len);
+
+                        const screen_padding = @intCast(i16, g_screen_padding);
+                        const screen_edge = screen.y + @intCast(i32, screen.height) - screen_padding;
+                        const win_edge_y = win_geo.y + win_total_height;
+                        const win_abs_y = win_geo.y - screen.y - screen_padding;
+                        const win_abs_edge_y = win_abs_y + win_total_height;
+                        var grid_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_y) / @intToFloat(f32, tile_height)));
+                        var grid_edge_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_edge_y) / @intToFloat(f32, tile_height)));
+
+                        var on_top = @rem(win_abs_y, tile_height) == 0;
+                        var on_bottom = (screen.y + @intCast(i16, screen.height) - screen_padding == win_edge_y) or (@rem(win_abs_edge_y, tile_height) == 0);
+
+                        if (grid_loc != -1 or (on_bottom and grid_loc == -1)) {
+                            grid_loc += 1;
+                        }
+
+                        if (win_total_height < tile_height and (win_edge_y >= screen_edge or grid_loc == -1)) {
+                            grid_loc += 1;
+                        }
+
+                        grid_edge_loc += 1;
+
+                        if (grid_loc >= 0 and grid_loc < brkpts_len) {
+                            new_y = breakpoints.at(@intCast(usize, grid_loc));
+                            const new_edge_y = new_y + win_total_height;
+
+                            if ((new_edge_y > screen_edge and win_edge_y < screen_edge)
+                                or (win_edge_y > screen_edge and new_edge_y < screen_edge)
+                            ) {
+                                new_y = screen_edge - win_total_height;
+                            }
+                            warn("inside\n");
+                        } else if (grid_edge_loc > 0 and grid_edge_loc < brkpts_len) {
+                            warn("outside\n");
+                            var index = @intCast(usize, grid_edge_loc);
+                            const bottom_edge = breakpoints.at(index);
+                            new_y = bottom_edge - win_total_height;
+                        } else if (win_total_height < tile_height and grid_loc == brkpts_len) {
+                            warn("window width < tile width\n");
+                            new_y = screen_edge - win_total_height;
+                        } else {
+                            const y = win_geo.y + win_total_height + @intCast(i16, tile_height);
+                            const win_edge_x = win_geo.x + @intCast(i16, win_geo.width + 2 * g_border_width);
+                            const new_screen = getScreenBasedOnCoords(win_geo.x + screen_padding, y, screens) orelse getScreenBasedOnCoords(win_edge_x - screen_padding, y, screens);
+                            warn("screen\n");
+
+                            if (new_screen != null and screen.id != new_screen.?.id) {
+                            warn("screen cont\n");
+                                _ = screen.removeWindow(win.?.value.id, allocator);
+                                new_screen.?.addWindow(win.?.value.id, allocator);
+
+                                const group_index = screen.groups.first.?.data;
+                                const new_group_index = new_screen.?.groups.first.?.data;
+                                const groups_slice = groups.toSlice();
+
+                                groups_slice[group_index].removeWindow(win.?.value.id, allocator);
+                                groups_slice[new_group_index].addWindow(win.?.value.id, allocator);
+
+                                win.?.value.screen_id = new_screen.?.id;
+                                win.?.value.group_index = new_group_index;
+
+                                new_y = new_screen.?.y + screen_padding;
+                            }
+                        }
+
+                        if (new_y != win_geo.y) {
+                            moveWindow(dpy, e.event, win_geo.x, new_y);
+                        }
                     } else {
                         for (groups.toSlice()) |const_target_group, i| {
                             var target_group = &groups.toSlice()[i];
@@ -1740,11 +1972,11 @@ fn configureWindow(dpy: ?*xcb_connection_t, win: xcb_window_t) void {
     var config_values: [3]u32 = undefined; // TODO
 
     config_mask = config_mask | _XCB_CONFIG_WINDOW_WIDTH;
-    config_values[i] = 200;
+    config_values[i] = 130;
     i += 1;
 
     config_mask = config_mask | _XCB_CONFIG_WINDOW_HEIGHT;
-    config_values[i] = 200;
+    config_values[i] = 105;
     i += 1;
 
     config_mask = config_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
@@ -1825,20 +2057,33 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
     var gc_rects = ArrayList(xcb_rectangle_t).init(allocator);
     defer gc_rects.deinit();
 
-    const tile_width = @divTrunc(screen.width, g_grid_cols);
-    const tile_height = @divTrunc(screen.height, g_grid_rows);
-    warn("{}\n", tile_width);
-    warn("{}\n", tile_height);
+    const tile_width = @divTrunc(screen.width - 2 * g_screen_padding, g_grid_cols);
+    const tile_height = @divTrunc(screen.height - 2 * g_screen_padding, g_grid_rows);
+    warn("col rem: {}\n", @rem(screen.width - 2 * g_screen_padding, g_grid_cols));
+    warn("row rem: {}\n", @rem(screen.height - 2 * g_screen_padding, g_grid_rows));
 
     var row = u8(0);
     while (row < g_grid_rows) : (row+=1) {
         var col = u8(0);
         while (col < g_grid_cols) : (col+=1) {
+            var width = tile_width - 1;
+            var height = tile_height - 1;
+
+            // TODO: set a config which allows which tiles to 'stretch' ???
+            // Top, right, bottom, left?
+            if (col == (g_grid_cols - 1)) {
+                width += @rem(screen.width - 2 * g_screen_padding, g_grid_cols);
+            }
+
+            if (row == (g_grid_rows - 1)) {
+                height += @rem(screen.height - 2 * g_screen_padding, g_grid_rows);
+            }
+
             var rect = xcb_rectangle_t.{
-                .x = screen.x + @intCast(i16, tile_width * col),
-                .y = screen.y + @intCast(i16, tile_height * row),
-                .width = tile_width - 1,
-                .height = tile_height - 1,
+                .x = screen.x + @intCast(i16, tile_width * col + g_screen_padding),
+                .y = screen.y + @intCast(i16, tile_height * row + g_screen_padding),
+                .width = width,
+                .height = height,
             };
 
             try gc_rects.append(rect);
@@ -1846,6 +2091,36 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
     }
 
     return gc_rects.toOwnedSlice();
+}
+
+
+fn getGridCols(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
+    var col_locations = ArrayList(i32).init(allocator);
+
+    const tile_width = @divTrunc(screen.width - 2 * g_screen_padding, g_grid_cols);
+
+    var col = u8(0);
+    while (col < g_grid_cols) : (col+=1) {
+        var loc = screen.x + @intCast(i16, tile_width * col + g_screen_padding);
+        try col_locations.append(loc);
+    }
+
+    return col_locations;
+}
+
+
+fn getGridRows(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
+    var row_locations = ArrayList(i32).init(allocator);
+
+    const tile_height = @divTrunc(screen.height - 2 * g_screen_padding, g_grid_rows);
+
+    var row = u8(0);
+    while (row < g_grid_rows) : (row+=1) {
+        var loc = screen.y + @intCast(i16, tile_height * row + g_screen_padding);
+        try row_locations.append(loc);
+    }
+
+    return row_locations;
 }
 
 
