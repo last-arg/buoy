@@ -1,6 +1,7 @@
 General:
-Remove/Replace xlib functions if possible: XStringToKeysym
-Try to combine functions getWindowGeometryInside and inBoundsWindowGeometry.
+[ ] Remove/Replace xlib functions if possible: XStringToKeysym
+[ ] Try to combine functions getWindowGeometryInside and inBoundsWindowGeometry.
+[ ] Convert enums to int (@enumToInt)
 
 
 Screen:
