@@ -2,6 +2,8 @@ General:
 [ ] Remove/Replace xlib functions if possible: XStringToKeysym
 [ ] Try to combine functions getWindowGeometryInside and inBoundsWindowGeometry.
 [ ] Convert enums to int (@enumToInt)
+[ ] Code that deals with placing window into another screen should be good candidate for
+function.
 
 
 Screen:
@@ -15,6 +17,7 @@ Group:
 Change window:
 [?] Windows' scan area. Trapezoid with triangle(inside window).
 [ ] Add multi-color border. Use xcb_create_gc.
+[ ] Screen A has no windows but is the active screen. So if you try to move to another window it should search closest window on another screen. Use screen mid point as src point.
 
 
 Debugging:
