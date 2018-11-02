@@ -133,6 +133,12 @@ const KeyFunc = union(enum).{
     Shift: @typeOf(keypressShiftLeft),
     Change: @typeOf(keypressChangeLeft),
     WindowToGroup: @typeOf(keypressWindowToGroup),
+    Spawn: KeyFuncSpawn,
+};
+
+const KeyFuncSpawn = struct.{
+    func: @typeOf(keypressSpawn),
+    value: []const []const u8,
 };
 
 const Key = struct.{
@@ -148,6 +154,12 @@ const Key = struct.{
             .func = func,
         };
     }
+};
+
+const xterm = KeyFuncSpawn.{.func = keypressSpawn, .value=[]const []const u8.{"xterm"}};
+
+var root_keymap = []Key.{
+    Key.create("t", g_mod, KeyFunc.{.Spawn = xterm}),
 };
 
 var keymap = []Key.{
@@ -1402,6 +1414,20 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
     var keysym = xcb_key_press_lookup_keysym(key_symbols, @ptrCast(?[*]xcb_key_press_event_t, e), 0);
     xcb_key_symbols_free(key_symbols);
 
+    for (root_keymap) |key| {
+        if (key.mod == e.state and keysym == @intCast(u32, xlib.XStringToKeysym(&key.char))) {
+            var argv = []const []const u8.{"xterm"};
+            switch (key.func) {
+                KeyFunc.Move,
+                KeyFunc.Shift,
+                KeyFunc.Change,
+                KeyFunc.WindowToGroup => return,
+                KeyFunc.Spawn => |f| f.func(allocator, f.value),
+            }
+            break; // TODO: change to return after refactor
+        }
+    }
+
     for (keymap) |key| {
         if (key.mod == e.state and keysym == @intCast(u32, xlib.XStringToKeysym(&key.char))) {
             switch (key.func) {
@@ -1409,133 +1435,105 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
                 KeyFunc.Shift => |f| f(allocator, dpy, e, screens, groups, windows),
                 KeyFunc.Change => |f| f(allocator, dpy, e, screens, groups, windows),
                 KeyFunc.WindowToGroup => |f| f(allocator, dpy, e, screens, groups, windows),
+                KeyFunc.Spawn => return,
             }
-            break;
+            break; // TODO: change to return after refactor
         }
     }
 
     if (e.state == g_mod) {
-        const is_left = keysym == @intCast(u32, xlib.XStringToKeysym(c"h"));
-        const is_up = keysym == @intCast(u32, xlib.XStringToKeysym(c"k"));
-        const is_right = keysym == @intCast(u32, xlib.XStringToKeysym(c"l"));
-        const is_down = keysym == @intCast(u32, xlib.XStringToKeysym(c"j"));
+        var groups_slice = groups.toSlice();
+        group_start: for (group_strings) |char, i| {
+            // TODO: Empty group is first but there is also
+            // active window. Have to hide either of them if selected
+            if (keysym == @intCast(u32, xlib.XStringToKeysym(char))) {
+                warn("group press\n");
+                var active_screen = blk: {
+                    if (e.child != 0) {
+                        var win = windows.get(e.child);
+                        break :blk getScreen(win.?.value.screen_id, screens);
+                    }
+                    break :blk getActiveMouseScreen(screens);
+                };
 
-        if (is_left or is_up or is_right or is_down) {
+                var selected_group = groups_slice[i];
+                var active_group = groups_slice[active_screen.groups.first.?.data];
 
-        } else if (keysym == @intCast(u32, xlib.XStringToKeysym(c"t"))) {
-            warn("open xterm\n");
-            var argv = []const []const u8.{"xterm"};
-            var child_result = try child.init(argv, allocator);
-            var env_map = try os.getEnvMap(allocator);
-            child_result.env_map = &env_map;
-            _ = try child.spawn(child_result);
-        } else {
-            var groups_slice = groups.toSlice();
-            group_start: for (group_strings) |char, i| {
-                // TODO: Empty group is first but there is also
-                // active window. Have to hide either of them if selected
-                if (keysym == @intCast(u32, xlib.XStringToKeysym(char))) {
-                    warn("group press\n");
-                    var active_screen = blk: {
-                        if (e.child != 0) {
-                            var win = windows.get(e.child);
-                            break :blk getScreen(win.?.value.screen_id, screens);
+                if (active_screen.groups.len == 1 and selected_group.index == active_group.index) break;
+
+
+                var group_screen = blk: {
+                    var screen_node = screens.first;
+                    while (screen_node != null) : (screen_node = screen_node.?.next) {
+                        // NOTE: Breaks out the whole loop
+                        // Happens if group was found on another screen
+                        // and that screen only has one group
+                        if (screen_node.?.data.groups.len == 1 and screen_node.?.data.groups.first.?.data == selected_group.index and screen_node.?.data.id != active_screen.id) {
+                            break :group_start;
                         }
-                        break :blk getActiveMouseScreen(screens);
-                    };
 
-                    var selected_group = groups_slice[i];
-                    var active_group = groups_slice[active_screen.groups.first.?.data];
-
-                    if (active_screen.groups.len == 1 and selected_group.index == active_group.index) break;
-
-
-                    var group_screen = blk: {
-                        var screen_node = screens.first;
-                        while (screen_node != null) : (screen_node = screen_node.?.next) {
-                            // NOTE: Breaks out the whole loop
-                            // Happens if group was found on another screen
-                            // and that screen only has one group
-                            if (screen_node.?.data.groups.len == 1 and screen_node.?.data.groups.first.?.data == selected_group.index and screen_node.?.data.id != active_screen.id) {
-                                break :group_start;
+                        var group_node = screen_node.?.data.groups.first;
+                        while (group_node != null) : (group_node = group_node.?.next) {
+                            if (group_node.?.data == selected_group.index) {
+                                warn("screen {} has group {}\n", screen_node.?.data.id, selected_group.index);
+                                screen_node.?.data.groups.remove(group_node.?);
+                                screen_node.?.data.groups.destroyNode(group_node.?, allocator);
+                                break :blk &screen_node.?.data;
                             }
-
-                            var group_node = screen_node.?.data.groups.first;
-                            while (group_node != null) : (group_node = group_node.?.next) {
-                                if (group_node.?.data == selected_group.index) {
-                                    warn("screen {} has group {}\n", screen_node.?.data.id, selected_group.index);
-                                    screen_node.?.data.groups.remove(group_node.?);
-                                    screen_node.?.data.groups.destroyNode(group_node.?, allocator);
-                                    break :blk &screen_node.?.data;
-                                }
-                            }
-
                         }
-                        break :blk null;
-                    };
+
+                    }
+                    break :blk null;
+                };
 
 
-                    // Remove and unmap windows from existing group's screen
-                    if (group_screen) |screen| {
-                        warn("group existed on another screen");
-                        var window_node = selected_group.windows.last;
-                        while (window_node != null) : (window_node = window_node.?.prev) {
-                            const id = window_node.?.data;
+                // Remove and unmap windows from existing group's screen
+                if (group_screen) |screen| {
+                    warn("group existed on another screen");
+                    var window_node = selected_group.windows.last;
+                    while (window_node != null) : (window_node = window_node.?.prev) {
+                        const id = window_node.?.data;
 
-                            if (screen.removeWindow(id, allocator)) {
-                                _ = _xcb_unmap_window(dpy, window_node.?.data, &return_cookie);
-                            }
+                        if (screen.removeWindow(id, allocator)) {
+                            _ = _xcb_unmap_window(dpy, window_node.?.data, &return_cookie);
                         }
                     }
-
-                    if (active_group.index != selected_group.index) {
-
-                        // Add and map windows to Screen from Group's windows
-                        var group_window_node = selected_group.windows.last;
-                        while (group_window_node != null) : (group_window_node = group_window_node.?.prev) {
-
-                            active_screen.addWindow(group_window_node.?.data, allocator);
-
-                            var window_info = windows.get(group_window_node.?.data);
-                            if (window_info.?.value.screen_id != active_screen.id) {
-                                var window_screen = getScreen(window_info.?.value.screen_id, screens);
-                                moveWindowBetweenScreens(dpy, &window_info.?.value, window_screen.*, active_screen.*);
-                            }
-
-                            raiseWindow(dpy, window_info.?.value.id);
-                            _ = _xcb_map_window(dpy, group_window_node.?.data, &return_cookie);
-
-                        }
-
-                        var new_group_node = try active_screen.groups.createNode(@intCast(u8, i), allocator);
-                        active_screen.groups.prepend(new_group_node);
-                    }
-
-                    if (active_screen.windows.first) |window_id| {
-                        var focused_window = getFocusedWindow(dpy);
-                        unfocusWindow(dpy, focused_window, g_default_border_color);
-                        focusWindow(dpy, window_id.data, g_active_border_color);
-                    }
-
-                    break;
                 }
+
+                if (active_group.index != selected_group.index) {
+
+                    // Add and map windows to Screen from Group's windows
+                    var group_window_node = selected_group.windows.last;
+                    while (group_window_node != null) : (group_window_node = group_window_node.?.prev) {
+
+                        active_screen.addWindow(group_window_node.?.data, allocator);
+
+                        var window_info = windows.get(group_window_node.?.data);
+                        if (window_info.?.value.screen_id != active_screen.id) {
+                            var window_screen = getScreen(window_info.?.value.screen_id, screens);
+                            moveWindowBetweenScreens(dpy, &window_info.?.value, window_screen.*, active_screen.*);
+                        }
+
+                        raiseWindow(dpy, window_info.?.value.id);
+                        _ = _xcb_map_window(dpy, group_window_node.?.data, &return_cookie);
+
+                    }
+
+                    var new_group_node = try active_screen.groups.createNode(@intCast(u8, i), allocator);
+                    active_screen.groups.prepend(new_group_node);
+                }
+
+                if (active_screen.windows.first) |window_id| {
+                    var focused_window = getFocusedWindow(dpy);
+                    unfocusWindow(dpy, focused_window, g_default_border_color);
+                    focusWindow(dpy, window_id.data, g_active_border_color);
+                }
+
+                break;
             }
         }
-
-    } else if (e.state == _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT) {
-        const is_left = keysym == @intCast(u32, xlib.XStringToKeysym(c"h"));
-        const is_up = keysym == @intCast(u32, xlib.XStringToKeysym(c"k"));
-        const is_right = keysym == @intCast(u32, xlib.XStringToKeysym(c"l"));
-        const is_down = keysym == @intCast(u32, xlib.XStringToKeysym(c"j"));
-
-        if (is_left) {
-        } else if (is_right) {
-        } else if (is_up) {
-        } else if (is_down) {
-        } 
-
-
     }
+
     debugScreens(screens, windows);
     debugWindows(windows);
     debugGroups(groups);
@@ -2738,6 +2736,22 @@ warn("{}\n", dest_group);
     if (getActiveMouseScreen(screens).windows.first) |new_focus| {
         focusWindow(dpy, new_focus.data, g_active_border_color);
     }
-
 }
 
+fn keypressSpawn(allocator: *Allocator, argv: []const []const u8) void {
+    warn("spawn application: {}\n", argv[0]);
+    // var argv = []const []const u8.{"xterm"};
+    var child_result = child.init(argv, allocator) catch {
+        warn("Failed to create child process.");
+        return;
+    };
+    // TODO: don't return if error
+    var env_map = os.getEnvMap(allocator) catch {
+        warn("Failed to get environment variables.");
+        return;
+    };
+    child_result.env_map = &env_map;
+    _ = child.spawn(child_result) catch {
+        warn("Failed to spawn application/program.\n");
+    };
+}
