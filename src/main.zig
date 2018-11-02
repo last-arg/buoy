@@ -59,6 +59,7 @@ const Screen = struct.{
 const Group = struct.{
     index: u8,
     windows: LinkedList(xcb_window_t),
+    value: []u8,
     // TODO: add string values
 
     pub fn removeWindow(self: *Group, id: xcb_window_t, allocator: *Allocator) void {
@@ -100,7 +101,9 @@ const Point = struct.{
     y: i32,
 };
 
-
+fn getWindowHash(id: c_ulong) u32 {
+    return @intCast(u32, id);
+}
 
 const WindowsHashMap = HashMap(c_ulong, Window, getWindowHash, comptime hash_map.getAutoEqlFn(c_ulong));
 
@@ -129,17 +132,18 @@ const KeyFunc = union(enum).{
     Move: @typeOf(keypressMoveLeft),
     Shift: @typeOf(keypressShiftLeft),
     Change: @typeOf(keypressChangeLeft),
+    WindowToGroup: @typeOf(keypressWindowToGroup),
 };
 
 const Key = struct.{
     const Self = @This();
-    sym: [1] u8,
-    mod: u32,
+    char: [1] u8,
+    mod: u16,
     func: KeyFunc,
 
-    pub fn create(sym: [1]u8, mod: u32, func: KeyFunc) Self {
+    pub fn create(char: [1]u8, mod: u16, func: KeyFunc) Self {
         return Self.{
-            .sym = sym,
+            .char = char,
             .mod = mod,
             .func = func,
         };
@@ -161,9 +165,18 @@ var keymap = []Key.{
     Key.create("l", g_mod, KeyFunc.{.Change = keypressChangeRight}),
     Key.create("k", g_mod, KeyFunc.{.Change = keypressChangeUp}),
     Key.create("j", g_mod, KeyFunc.{.Change = keypressChangeDown}),
+
+    Key.create("1", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
+    Key.create("2", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
+    Key.create("3", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
+    Key.create("4", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
+    Key.create("5", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
+
 };
 
+
 pub fn main() !void {
+
     var dpy = xcb_connect(null, null);
     if (xcb_connection_has_error(dpy) > 0) return error.FailedToOpenDisplay;
 
@@ -252,14 +265,33 @@ pub fn main() !void {
     var groups = ArrayList(Group).init(allocator);
     defer groups.deinit();
     // Make sure there are atleast as many groups as there are monitors
-    if (group_count < @intCast(u8, number_of_monitors)) group_count = @intCast(u8, number_of_monitors);
-    try groups.resize(group_count);
+    if (group_count < @intCast(u8, number_of_monitors)) {
+        warn("Number of groups is less than monitor count. Changing number of groups to {}", number_of_monitors);
+        group_count = @intCast(u8, number_of_monitors);
+    }
+    if (group_count > 10) {
+        warn("Groups count too large. Changing group count to 10");
+        group_count = 10;
+    }
+    groups.resize(group_count) catch {
+        panic("Failed to initalize groups' strcutures");
+    };
+
     {
+        var buffer: [2]u8 = undefined;
+        var out = buffer[0..];
         var i: u8 = 0;
         while (i < group_count) : (i += 1) {
+            var count = fmt.formatIntBuf(out, @rem(i + 1, 10), 10, false, 0);
+        warn("out: {}\n", out);
+            const val = mem.dupe(allocator, u8, out) catch {
+                warn("Creating/Initializing groups error: Failed memory allocation for groups value field.\n");
+                continue;
+            };
             var group = Group.{
                 .index = i,
                 .windows = LinkedList(xcb_window_t).init(),
+                .value = val,
             };
             groups.set(i, group);
         }
@@ -361,7 +393,7 @@ pub fn main() !void {
 
             configureWindow(dpy, win);
             resizeAndMoveWindow(dpy, win, active_screen);
-            setWindowEvents(dpy, win, group_strings);
+            setWindowEvents(dpy, win);
             _ = addWindow(allocator, win, active_screen, group, &windows);
 
         }
@@ -512,7 +544,7 @@ warn("{}\n", e);
                 var group = &groups.toSlice()[group_index];
 
 
-                setWindowEvents(dpy, e.window, group_strings);
+                setWindowEvents(dpy, e.window);
 
                 // TODO: set window location and dimensions
                 resizeAndMoveWindow(dpy, e.window, active_screen);
@@ -1103,10 +1135,6 @@ fn addWindow(allocator: *Allocator, win: xcb_window_t, screen: *Screen, group: *
 }
 
 
-fn getWindowHash(id: c_ulong) u32 {
-    return @intCast(u32, id);
-}
-
 
 fn debugWindows(windows: WindowsHashMap) void {
     var iter = windows.iterator();
@@ -1154,12 +1182,11 @@ fn debugGroups(groups: ArrayList(Group)) void {
 }
 
 
-fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, group_strings: []const [*]const u8) void {
+fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t) void {
     var return_void_pointer: xcb_void_cookie_t = undefined;
     var key_symbols = xcb_key_symbols_alloc(dpy);
     var keysym: xlib.KeySym = undefined;
     var keycode: xcb_keycode_t = undefined;
-    var move_strings = []const [*]const u8.{c"h", c"j", c"k", c"l"};
 
     _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_1, _XCB_MOD_MASK_1, &return_void_pointer);
 
@@ -1169,25 +1196,12 @@ fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, group_strings:
 
     _ = grab_button(dpy, 1, window, _XCB_EVENT_MASK_BUTTON_PRESS, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, window, XCB_NONE, _XCB_BUTTON_INDEX_3, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, &return_void_pointer);
 
-    // Window navigation
-    for (move_strings) |str| {
-        keysym = xlib.XStringToKeysym(str);
-        keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
-            _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
-
-        keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
-            _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
-
-        keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
-            _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_CONTROL, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
-    }
-
-    // Window movement between groups
-    for (group_strings) |char| {
-        keysym = xlib.XStringToKeysym(char);
+    for (keymap) |key| {
+        keysym = xlib.XStringToKeysym(&key.char);
         keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
 
-        _ = _xcb_grab_key(dpy, 1, window, _XCB_MOD_MASK_1 | _XCB_MOD_MASK_SHIFT, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+        _ = _xcb_grab_key(dpy, 1, window, key.mod, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_void_pointer);
+
     }
 
     xcb_key_symbols_free(key_symbols);
@@ -1389,11 +1403,12 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
     xcb_key_symbols_free(key_symbols);
 
     for (keymap) |key| {
-        if (key.mod == e.state and keysym == @intCast(u32, xlib.XStringToKeysym(&key.sym))) {
+        if (key.mod == e.state and keysym == @intCast(u32, xlib.XStringToKeysym(&key.char))) {
             switch (key.func) {
                 KeyFunc.Move => |f| f(allocator, dpy, e, screens, groups, windows),
                 KeyFunc.Shift => |f| f(allocator, dpy, e, screens, groups, windows),
                 KeyFunc.Change => |f| f(allocator, dpy, e, screens, groups, windows),
+                KeyFunc.WindowToGroup => |f| f(allocator, dpy, e, screens, groups, windows),
             }
             break;
         }
@@ -1517,74 +1532,7 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
         } else if (is_right) {
         } else if (is_up) {
         } else if (is_down) {
-        } else {
-            // @continue
-            for (groups.toSlice()) |const_target_group, i| {
-                var target_group = &groups.toSlice()[i];
-                if (keysym == @intCast(u32, xlib.XStringToKeysym(group_strings[i]))) {
-                var window = windows.get(e.event);
-                if (target_group.index == window.?.value.group_index) break;
-
-                warn("move window to a group\n");
-                var window_screen = getScreen(window.?.value.screen_id, screens);
-                var group_windows = &groups.toSlice()[window.?.value.group_index].windows;
-                var group_node = group_windows.first;
-                while (group_node != null) : (group_node = group_node.?.next) {
-                    if (group_node.?.data == window.?.value.id) {
-                        group_windows.remove(group_node.?);
-                        group_windows.destroyNode(group_node.?, allocator);
-                        break;
-                    }
-                }
-
-                var screen_node = screens.first;
-                screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
-                    var window_node = screen_node.?.data.windows.first;
-                    while (window_node != null) : (window_node = window_node.?.next) {
-                        if (window_node.?.data == window.?.value.id) {
-                            unfocusWindow(dpy, window.?.value.id, g_default_border_color);
-                            screen_node.?.data.windows.remove(window_node.?);
-                            screen_node.?.data.windows.destroyNode(window_node.?, allocator);
-                            break :screen_loop;
-                        }
-                    }
-                }
-
-                _ = _xcb_unmap_window(dpy, window.?.value.id, &return_cookie);
-
-                var new_node = try target_group.windows.createNode(window.?.value.id, allocator);
-                target_group.windows.prepend(new_node);
-                window.?.value.group_index = target_group.index;
-
-                screen_node = screens.first;
-                screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
-                    var screen_group_node = screen_node.?.data.groups.first;
-                    while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
-                        if (screen_group_node.?.data == target_group.index) {
-                            var new_win_node = try screen_node.?.data.windows.createNode(window.?.value.id, allocator);
-                            screen_node.?.data.windows.prepend(new_win_node);
-
-                            if (window.?.value.screen_id != screen_node.?.data.id) {
-                                moveWindowBetweenScreens(dpy, &window.?.value, window_screen.*, screen_node.?.data);
-                            }
-                            // raiseWindow(dpy, window.?.value.id);
-                            _ = _xcb_map_window(dpy, window.?.value.id, &return_cookie);
-                            break :screen_loop;
-                        }
-                    }
-                }
-
-
-                // TODO: Or focus new window the screen the source/target
-                // (var window_screen) window was ???
-                if (getActiveMouseScreen(screens).windows.first) |new_focus| {
-                    focusWindow(dpy, new_focus.data, g_active_border_color);
-                }
-
-                break;
-                }
-            }
-        }
+        } 
 
 
     }
@@ -1596,15 +1544,7 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
 
 
 fn keypressMoveLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: LinkedList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
-// fn keypressMoveLeft(args: Args) void {
     warn("move left func\n");
-    // if (!KeyFuncType.validateMoveArgs(args)) return;
-    // var allocator = args.allocator.?;
-    // var dpy = args.dpy;
-    // var e = args.e.?;
-    // var screens = args.screens.?;
-    // var groups = args.groups.?;
-    // var windows = args.windows.?;
 
     var win = windows.get(e.event);
     if (win == null) return;
@@ -2700,3 +2640,104 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         focusWindow(dpy, closest_win, g_active_border_color);
     }
 }
+
+
+fn keypressToggleGroup() void {
+}
+
+fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: LinkedList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
+    var return_cookie: xcb_void_cookie_t = undefined;
+    warn("move window to a group\n");
+    // var target_group = &groups.toSlice()[i];
+    var dest_group_index = blk: {
+    // var dest_group = blk: {
+        var e_ = @intToPtr(?[*]struct_xcb_key_press_event_t, @ptrToInt(e));
+        const key_symbols = xcb_key_symbols_alloc(dpy);
+        const keysym = xcb_key_press_lookup_keysym(key_symbols, e_, 0);
+        xcb_key_symbols_free(key_symbols);
+        for (groups.toSlice()) |g, i| {
+            var group = @intToPtr(*Group, @ptrToInt(&g));
+            const sym = @intCast(u32, xlib.XStringToKeysym(@ptrCast(?[*]const u8, group.value[0..].ptr)));
+            if (sym == keysym) {
+                // break :blk @intToPtr(*Group, @ptrToInt(&g));
+                break :blk i;
+            }
+        }
+
+        warn("keypressGroupMoveWindow function: Didn't find group with key pressed.");
+        return;
+    };
+    var dest_group = &groups.toSlice()[dest_group_index];
+
+warn("{}\n", dest_group);
+    warn("move window to a group 1\n");
+    var window_kv = windows.get(e.event);
+    if (window_kv == null) return;
+    var window = window_kv.?.value;
+    if (dest_group.index == window.group_index) return;
+
+    const new_node = dest_group.windows.createNode(window.id, allocator) catch {
+        warn("keypressMoveWindow function: Failed to create new window node.");
+        return;
+    };
+
+    var src_group = &groups.toSlice()[window.group_index];
+    var group_win_node = src_group.windows.first;
+    // Remove window from source group
+    while (group_win_node != null) : (group_win_node = group_win_node.?.next) {
+        if (group_win_node.?.data == window.id) {
+            src_group.windows.remove(group_win_node.?);
+            src_group.windows.destroyNode(group_win_node.?, allocator);
+            break;
+        }
+    }
+
+    var screen_node = screens.first;
+    // Remove window from screen
+    screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
+        var window_node = screen_node.?.data.windows.first;
+        while (window_node != null) : (window_node = window_node.?.next) {
+            if (window_node.?.data == window.id) {
+                unfocusWindow(dpy, window.id, g_default_border_color);
+                screen_node.?.data.windows.remove(window_node.?);
+                screen_node.?.data.windows.destroyNode(window_node.?, allocator);
+                break :screen_loop;
+            }
+        }
+    }
+
+    _ = _xcb_unmap_window(dpy, window.id, &return_cookie);
+    dest_group.windows.prepend(new_node);
+
+    var screen = getScreen(window.screen_id, screens);
+    screen_node = screens.first;
+    screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
+        var screen_group_node = screen_node.?.data.groups.first;
+        while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
+            if (screen_group_node.?.data == dest_group.index) {
+                var new_win_node = screen_node.?.data.windows.createNode(window.id, allocator) catch {
+                    warn("keypressMoveWindow function: Failed to create new window node.");
+                    return;
+                };
+                screen_node.?.data.windows.prepend(new_win_node);
+
+                if (window.screen_id != screen_node.?.data.id) {
+                    moveWindowBetweenScreens(dpy, &window_kv.?.value, screen.*, screen_node.?.data);
+                }
+                // raiseWindow(dpy, window.id);
+                _ = _xcb_map_window(dpy, window.id, &return_cookie);
+                break :screen_loop;
+            }
+        }
+    }
+
+    window_kv.?.value.group_index = dest_group.index;
+
+    // TODO: Or focus new window the screen the source/target
+    // (var window_screen) window was ???
+    if (getActiveMouseScreen(screens).windows.first) |new_focus| {
+        focusWindow(dpy, new_focus.data, g_active_border_color);
+    }
+
+}
+
