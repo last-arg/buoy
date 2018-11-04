@@ -22,7 +22,7 @@ Change window:
 
 
 Debugging:
-[] Move debug functions to its own file. 
+[ ] Move debug functions to its own file. 
 
 
 Move windows:
@@ -37,4 +37,4 @@ Shift + {y,u,b,n,g}
   [?] Amount based on tile width or height divided by some number.
 Shift + {h,j,k,l} 
   [*] Move window to the next closest grid line/border. 
-  [?] Use window middle point as anchor instead top-left. Don't forget to take into account resizing with keyboard. The anchor wouldn't stay in place when resizing. Would have to resize and set window into position it was before resizing. So resizing would change left/right or top/bottom edges' position. Although another option would be not re-anchor after resizing. But this has its own problems. At the moment don't see a good solution to middle point anchor resizing.
+  [?] Use window middle point as anchor instead top-left. Middle anchor will cause difficulties with resizing window.
