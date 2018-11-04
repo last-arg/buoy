@@ -21,90 +21,130 @@ const xrandr = @import("Xrandr.zig");
 use @import("c_import.zig");
 use @import("xcb_extern.zig");
 
-const Screen = struct.{
-    id: u32, 
-    has_mouse: bool,
+// TODO: combine ScreenGeometry and Geometry
+const ScreenGeometry = struct.{
     x: i16,
     y: i16,
     width: u16,
     height: u16,
-    groups: LinkedList(u8),
-    windows: LinkedList(xcb_window_t),
-
-    pub fn removeWindow(self: *Screen, id: xcb_window_t, allocator: *Allocator) bool {
-        var node = self.windows.first;
-        while (node != null) : (node = node.?.next) {
-            if (id == node.?.data) {
-                self.windows.remove(node.?);
-                self.windows.destroyNode(node.?, allocator);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    pub fn addWindow(self: *Screen, id: xcb_window_t, allocator: *Allocator) void {
-        const node = self.windows.createNode(id, allocator) catch |err| {
-            warn("Error was raised when trying to add new window to Screen. Error msg: {}\n", err);
-            return;
-        };
-        self.windows.prepend(node);
-    }
-
-    pub fn destroyGroup(self: *Screen, id: u8, allocator: *Allocator) bool {
-        var node = self.groups.first;
-        while (node != null) : (node = node.?.next) {
-            if (id == node.?.data) {
-                self.groups.remove(node.?);
-                self.groups.destroyNode(node.?, allocator);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    pub fn addGroup(self: *Screen, id: u8, allocator: *Allocator) void {
-        const node = self.groups.createNode(id, allocator) catch |err| {
-            warn("Error was raised when trying to add new group to Screen. Error msg: {}\n", err);
-            return;
-        };
-        self.groups.prepend(node);
-    }
-
-    // TODO: redo this function
-    // 1) remove window from self Screen
-    // 2) calculate new coords and dimensions ???
-    // 3) return window (if planning adding geo info) / return new geo info ???
-    // TODO: when resizing check if valid new dimesions (min window dimensions)
-    pub fn windowToScreen(self: *Screen, dpy: ?*xcb_connection_t, win: *Window, dest_screen: *Screen) void {
-        var return_geo: xcb_get_geometry_cookie_t = undefined;
-        _ = _xcb_get_geometry(dpy, win.id, &return_geo);
-        var geo = xcb_get_geometry_reply(dpy, return_geo, null);
-
-        var new_width = @intToFloat(f32, geo.?[0].width) * (@intToFloat(f32, dest_screen.width) / @intToFloat(f32, self.width));
-        var new_height = @intToFloat(f32, geo.?[0].height) * (@intToFloat(f32, dest_screen.height) / @intToFloat(f32, self.height));
-
-        var new_x = geo.?[0].x;
-        if (dest_screen.x < self.x) {
-            new_x -= self.x;
-        } else if (dest_screen.x > self.x) {
-            new_x += dest_screen.x;
-        }
-
-        var new_y = geo.?[0].y;
-        if (dest_screen.y < self.y) {
-            new_y -= self.y;
-        } else if (dest_screen.y > self.y) {
-            new_y += dest_screen.y;
-        }
-
-        moveWindow(dpy, win.id, new_x, new_y);
-        resizeWindow(dpy, win.id, @floatToInt(u32, new_width), @floatToInt(u32, new_height));
-
-        win.screen_id = dest_screen.id;
-    }
 };
 
+const Screen = ScreenFn();
+fn ScreenFn() type {
+    return struct.{
+        const Self = @This();
+        allocator: *Allocator,
+        id: u32,
+        geo: ScreenGeometry,
+        groups: LinkedList(u8),
+        windows: LinkedList(xcb_window_t),
+
+        pub fn init(id: u32, group_index: u8, geo: ScreenGeometry, allocator: *Allocator) !Self {
+            var screen = Self.{
+                .id = id,
+                .allocator = allocator,
+                .geo = geo,
+                .groups = LinkedList(u8).init(),
+                .windows = LinkedList(xcb_window_t).init(),
+            };
+
+            // TODO: add group to window
+            var group_node = try screen.groups.createNode(group_index, allocator);
+            screen.groups.prepend(group_node);
+
+            return screen;
+        }
+
+        pub fn addWindow(self: *Screen, id: xcb_window_t) void {
+            const node = self.windows.createNode(id, self.allocator) catch |err| {
+                warn("Error was raised when trying to add new window to Screen. Error msg: {}\n", err);
+                return;
+            };
+            self.windows.prepend(node);
+        }
+
+        pub fn removeWindow(self: *Screen, id: xcb_window_t) bool {
+            var node = self.windows.first;
+            while (node != null) : (node = node.?.next) {
+                if (id == node.?.data) {
+                    self.windows.remove(node.?);
+                    self.windows.destroyNode(node.?, self.allocator);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        pub fn destroyGroup(self: *Screen, id: u8) bool {
+            var node = self.groups.first;
+            while (node != null) : (node = node.?.next) {
+                if (id == node.?.data) {
+                    self.groups.remove(node.?);
+                    self.groups.destroyNode(node.?, self.allocator);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        pub fn addGroup(self: *Screen, id: u8) void {
+            const node = self.groups.createNode(id, self.allocator) catch |err| {
+                warn("Error was raised when trying to add new group to Screen. Error msg: {}\n", err);
+                return;
+            };
+            self.groups.prepend(node);
+        }
+
+
+        // TODO: separate function for window resizing or add a parameter/flag to this function
+        pub fn windowToScreen(self: *Screen, win: *Window, dest_screen: *Screen, groups: []Group) Window {
+            // Remove window from self.windows
+            _ = self.removeWindow(win.id);
+            // Remove window from current group(_index)
+            groups[win.group_index].removeWindow(win.id, self.allocator);
+            // Add window to dest_screen.windows
+            dest_screen.addWindow(win.id);
+            win.screen_id = dest_screen.id;
+            win.group_index = dest_screen.groups.first.?.data;
+            // Add window to dest_screen's first/active group
+            groups[win.group_index].addWindow(win.id, self.allocator);
+
+            return win.*;
+        }
+
+        // TODO: rename to recalculateWindowGeometry()
+        pub fn windowToScreenRender(self: *Screen, dpy: ?*xcb_connection_t, win: *Window, dest_screen: *Screen) void {
+            var return_geo: xcb_get_geometry_cookie_t = undefined;
+            _ = _xcb_get_geometry(dpy, win.id, &return_geo);
+            var geo = xcb_get_geometry_reply(dpy, return_geo, null);
+
+            var new_width = @intToFloat(f32, geo.?[0].width) * (@intToFloat(f32, dest_screen.geo.width) / @intToFloat(f32, self.geo.width));
+            var new_height = @intToFloat(f32, geo.?[0].height) * (@intToFloat(f32, dest_screen.geo.height) / @intToFloat(f32, self.geo.height));
+
+            var new_x = geo.?[0].x;
+            if (dest_screen.geo.x < self.geo.x) {
+                new_x -= self.geo.x;
+            } else if (dest_screen.geo.x > self.geo.x) {
+                new_x += dest_screen.geo.x;
+            }
+
+            var new_y = geo.?[0].y;
+            if (dest_screen.geo.y < self.geo.y) {
+                new_y -= self.geo.y;
+            } else if (dest_screen.geo.y > self.geo.y) {
+                new_y += dest_screen.geo.y;
+            }
+
+            moveWindow(dpy, win.id, new_x, new_y);
+            resizeWindow(dpy, win.id, @floatToInt(u32, new_width), @floatToInt(u32, new_height));
+
+            win.screen_id = dest_screen.id;
+        }
+    };
+}
+
+
+// TODO: add allocator field
 const Group = struct.{
     index: u8,
     windows: LinkedList(xcb_window_t),
@@ -170,6 +210,7 @@ var g_grid_cols: u8 = 4;
 var g_grid_total: u16 = undefined;
 var g_grid_color: u32 = undefined;
 var g_grid_show: bool = true;
+var g_screen_root: xcb_window_t = undefined;
 
 
 const g_mod = @intCast(u16, @enumToInt(XCB_MOD_MASK_1));
@@ -295,6 +336,7 @@ pub fn main() !void {
 
     var screen_data = return_screen.data.?[0];
     var screen_root = return_screen.data.?[0].root;
+    g_screen_root = screen_root;
 
     var return_cookie: xcb_void_cookie_t = undefined;
 
@@ -398,58 +440,31 @@ pub fn main() !void {
     var screens = LinkedList(Screen).init();
     // TODO: implement fallback (else branch)
     if (number_of_monitors > 0) {
-        // Pointer/Mouse location
-        var return_pointer: xcb_query_pointer_cookie_t = undefined;
-        _ = _xcb_query_pointer(dpy, screen_root, &return_pointer);
-        var pointer_reply = xcb_query_pointer_reply(dpy, return_pointer, null);
-        var pointer = pointer_reply.?[0];
-
         var j: u8 = 0;
         var return_monitors_iter: xcb_randr_monitor_info_iterator_t = undefined;
         _ = _xcb_randr_get_monitors_monitors_iterator(monitors, &return_monitors_iter);
-        var is_set_has_mouse = false;
+        // var is_set_has_mouse = false;
         while (return_monitors_iter.rem != 0) : ({
             _ = xcb_randr_monitor_info_next(@ptrCast(?[*]struct_xcb_randr_monitor_info_iterator_t ,&return_monitors_iter));
             j += 1;
         }) {
             var monitor = return_monitors_iter.data.?[0];
 
-            var has_mouse = (pointer.root_x >= monitor.x
-                and pointer.root_x <= (monitor.x + @intCast(i16, monitor.width))
-                and pointer.root_y >= monitor.y
-                and pointer.root_y <= (monitor.y + @intCast(i16, monitor.height)));
-
-            if (!is_set_has_mouse and has_mouse) {
-                is_set_has_mouse = true;
-            }
-            var screen = Screen.{
-                // NOTE: Xephyr test environment doesn't have primary monitor
-                .has_mouse = has_mouse,
-                .id = monitor.name,
-                .groups = LinkedList(u8).init(),
+            var geo = ScreenGeometry.{
                 .x = monitor.x,
                 .y = monitor.y,
                 .width = monitor.width,
                 .height = monitor.height,
-                .windows = std.LinkedList(xcb_window_t).init(),
             };
-            
-            var group_node = try screen.groups.createNode(j, allocator);
-            screen.groups.prepend(group_node);
+
+            var screen = try Screen.init(monitor.name, j, geo, allocator);
 
             var node_ptr = try screens.createNode(screen, allocator);
             screens.append(node_ptr);
 
             var rects = try getGridRectangles(allocator, screen);
-            _ = _xcb_clear_area(dpy, 1, screen_root, screen.x, screen.y, screen.width, screen.height, &return_cookie);
+            _ = _xcb_clear_area(dpy, 1, screen_root, screen.geo.x, screen.geo.y, screen.geo.width, screen.geo.height, &return_cookie);
             drawScreenGrid(dpy, screen_root, root_gc_id, rects);
-        }
-
-        // TODO: might have to do this for another methods screen/monitor detection ???
-        if (!is_set_has_mouse) {
-            var screen_info = screens.first.?.data;
-            _ = _xcb_warp_pointer(dpy, screen_root, screen_root, pointer.root_x, pointer.root_y, screen_info.width, screen_info.height, @intCast(i16, screen_info.width / 2), @intCast(i16, screen_info.height / 2), &return_cookie);
-            screens.first.?.data.has_mouse = true;
         }
     }
 
@@ -494,7 +509,7 @@ pub fn main() !void {
 
         }
 
-        if (getActiveMouseScreen(screens).windows.first) |win| {
+        if (getActiveMouseScreen(dpy, screens).windows.first) |win| {
             focusWindow(dpy, win.data, g_active_border_color);
         }
     }
@@ -623,7 +638,7 @@ pub fn main() !void {
 warn("{}\n", e);
                 var return_void_pointer: xcb_void_cookie_t = undefined;
 
-                var active_screen = getActiveMouseScreen(screens);
+                var active_screen = getActiveMouseScreen(dpy, screens);
                 var group_index = active_screen.groups.first.?.data;
                 var group = &groups.toSlice()[group_index];
 
@@ -681,7 +696,7 @@ warn("{}\n", e);
 
                 if (e.child != 0) continue;
 
-                var new_screen = getNewScreenOnChange(e.root_x, e.root_y, screens, getActiveMouseScreen(screens));
+                var new_screen = getNewScreenOnChange(e.root_x, e.root_y, screens, getActiveMouseScreen(dpy, screens));
 
                 if (new_screen) |screen| {
                     warn("{}\n", e);
@@ -858,10 +873,10 @@ fn debugMouse(dpy: ?*xlib.Display, default_root: xlib.Window) void {
 
 
 fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Screen) Geometry {
-    var screen_width: i32 = screen.width;
-    var screen_height: i32 = screen.height;
-    var new_x = x - screen.x;
-    var new_y = y - screen.y;
+    var screen_width: i32 = screen.geo.width;
+    var screen_height: i32 = screen.geo.height;
+    var new_x = x - screen.geo.x;
+    var new_y = y - screen.geo.y;
     var new_width = width;
     var new_height = height;
     const bw = @intCast(i32, g_border_width);
@@ -873,10 +888,10 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
 
     if ((new_x + win_total_width) >= screen_width) {
         new_x = new_x - (new_x + win_total_width - screen_width);
-        new_width = screen_width - 2 * bw - (x - screen.x) - sp;
+        new_width = screen_width - 2 * bw - (x - screen.geo.x) - sp;
     }
 
-    new_x = std.math.max(sp, new_x - sp) + screen.x;
+    new_x = std.math.max(sp, new_x - sp) + screen.geo.x;
 
     if (new_width < @intCast(i32, g_window_min_width)) {
         new_width = g_window_min_width;
@@ -888,10 +903,10 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
 
     if ((new_y + win_total_height) >= screen_height) {
         new_y = new_y - (new_y + win_total_height - screen_height);
-        new_height = screen_height - 2 * bw - (y - screen.y) - sp;
+        new_height = screen_height - 2 * bw - (y - screen.geo.y) - sp;
     }
 
-    new_y = std.math.max(sp, new_y - sp) + screen.y;
+    new_y = std.math.max(sp, new_y - sp) + screen.geo.y;
 
     if (new_height < @intCast(i32, g_window_min_height)) {
         new_height = g_window_min_height;
@@ -906,10 +921,10 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
 }
 
 fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) Geometry {
-    var screen_width:i32 = screen.width;
-    var screen_height:i32 = screen.height;
-    var x:i32 = w_attr.x - screen.x;
-    var y:i32 = w_attr.y - screen.y;
+    var screen_width:i32 = screen.geo.width;
+    var screen_height:i32 = screen.geo.height;
+    var x:i32 = w_attr.x - screen.geo.x;
+    var y:i32 = w_attr.y - screen.geo.y;
     var width:i32 = w_attr.width;
     var height:i32 = w_attr.height;        
     const bw = @intCast(i32, g_border_width);
@@ -928,7 +943,7 @@ fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) Ge
         x = x - (x + win_total_width - screen_width) - sp;
     }
 
-    x = std.math.max(sp, x) + screen.x;
+    x = std.math.max(sp, x) + screen.geo.x;
 
 
     // Height and y coordinate
@@ -944,7 +959,7 @@ fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) Ge
         y = y - (y + win_total_height - screen_height) - sp;
     }
 
-    y = std.math.max(sp, y) + screen.y;
+    y = std.math.max(sp, y) + screen.geo.y;
 
     return Geometry.{
         .x = x,
@@ -980,8 +995,8 @@ fn getNewScreenOnChange(x: i16, y: i16, screens: LinkedList(Screen), active_scre
         if (screen.?.data.id == active_screen.id) continue;
         if (isPointerInScreen(screen.?.data, x, y)) { 
             warn("Change screen {}\n", screen.?.data.id);
-            active_screen.has_mouse = false;
-            screen.?.data.has_mouse = true;
+            // active_screen.has_mouse = false;
+            // screen.?.data.has_mouse = true;
             return &screen.?.data;
         }
     }
@@ -1003,11 +1018,11 @@ fn getScreenBasedOnCoords(x: i16, y: i16, screens: LinkedList(Screen)) ?*Screen 
 
 
 fn isPointerInScreen(screen: Screen, x: i16 , y: i16) bool {
-    var screen_x_right = screen.x + @intCast(i32, screen.width) - 1;
-    var screen_y_bottom = screen.y + @intCast(i32, screen.height) - 1;
+    var screen_x_right = screen.geo.x + @intCast(i32, screen.geo.width) - 1;
+    var screen_y_bottom = screen.geo.y + @intCast(i32, screen.geo.height) - 1;
 
-    return (x >= screen.x)  and (x <= screen_x_right) 
-            and (y >= screen.y) and (y <= screen_y_bottom);
+    return (x >= screen.geo.x)  and (x <= screen_x_right) 
+            and (y >= screen.geo.y) and (y <= screen_y_bottom);
 }
 
 
@@ -1048,7 +1063,7 @@ fn debugScreenWindows(ll: LinkedList(Screen)) void {
     var item = ll.first;
     warn("\n----Screens----\n");
     while (item != null) : (item = item.?.next) {
-        warn("Screen: {} | has_mouse: {}\n", item.?.data.index, item.?.data.has_mouse);
+        warn("Screen: {}\n", item.?.data.index);
        warn("\twindows:");
         var w_node = item.?.data.windows.first;
         while (w_node != null) : (w_node = w_node.?.next) {
@@ -1127,13 +1142,14 @@ fn getScreen(screen_id: u32, screens: LinkedList(Screen)) *Screen {
 }
 
 
-fn getActiveMouseScreen(screens: LinkedList(Screen)) *Screen {
-    var node = screens.first;
-    while (node != null) : (node = node.?.next) {
-        if (node.?.data.has_mouse) break;
-    }
+// TODO: redo. Use function that finds pointer position.
+fn getActiveMouseScreen(dpy: ?*xcb_connection_t, screens: LinkedList(Screen)) *Screen {
+    var return_pointer: xcb_query_pointer_cookie_t = undefined;
+    _ = _xcb_query_pointer(dpy, g_screen_root, &return_pointer);
+    var pointer_reply = xcb_query_pointer_reply(dpy, return_pointer, null);
+    var pointer = pointer_reply.?[0];
 
-    return &node.?.data;
+    return getScreenBasedOnCoords(pointer.root_x, pointer.root_y, screens) orelse &screens.first.?.data;
 }
 
 fn debugGroups(groups: ArrayList(Group)) void {
@@ -1235,8 +1251,8 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
     var gc_rects = ArrayList(xcb_rectangle_t).init(allocator);
     defer gc_rects.deinit();
 
-    const tile_width = @divTrunc(screen.width - 2 * g_screen_padding, g_grid_cols);
-    const tile_height = @divTrunc(screen.height - 2 * g_screen_padding, g_grid_rows);
+    const tile_width = @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
+    const tile_height = @divTrunc(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
 
     var row = u8(0);
     while (row < g_grid_rows) : (row+=1) {
@@ -1248,16 +1264,16 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
             // TODO: set a config which allows which tiles to 'stretch' ???
             // Top, right, bottom, left?
             if (col == (g_grid_cols - 1)) {
-                width += @rem(screen.width - 2 * g_screen_padding, g_grid_cols);
+                width += @rem(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
             }
 
             if (row == (g_grid_rows - 1)) {
-                height += @rem(screen.height - 2 * g_screen_padding, g_grid_rows);
+                height += @rem(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
             }
 
             var rect = xcb_rectangle_t.{
-                .x = screen.x + @intCast(i16, tile_width * col + g_screen_padding),
-                .y = screen.y + @intCast(i16, tile_height * row + g_screen_padding),
+                .x = screen.geo.x + @intCast(i16, tile_width * col + g_screen_padding),
+                .y = screen.geo.y + @intCast(i16, tile_height * row + g_screen_padding),
                 .width = width,
                 .height = height,
             };
@@ -1273,11 +1289,11 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
 fn getGridCols(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
     var col_locations = ArrayList(i32).init(allocator);
 
-    const tile_width = @divTrunc(screen.width - 2 * g_screen_padding, g_grid_cols);
+    const tile_width = @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
 
     var col = u8(0);
     while (col < g_grid_cols) : (col+=1) {
-        var loc = screen.x + @intCast(i16, tile_width * col + g_screen_padding);
+        var loc = screen.geo.x + @intCast(i16, tile_width * col + g_screen_padding);
         try col_locations.append(loc);
     }
 
@@ -1288,11 +1304,11 @@ fn getGridCols(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
 fn getGridRows(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
     var row_locations = ArrayList(i32).init(allocator);
 
-    const tile_height = @divTrunc(screen.height - 2 * g_screen_padding, g_grid_rows);
+    const tile_height = @divTrunc(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
 
     var row = u8(0);
     while (row < g_grid_rows) : (row+=1) {
-        var loc = screen.y + @intCast(i16, tile_height * row + g_screen_padding);
+        var loc = screen.geo.y + @intCast(i16, tile_height * row + g_screen_padding);
         try row_locations.append(loc);
     }
 
@@ -1388,7 +1404,7 @@ fn keypressMoveLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
     var new_x = win_geo.x - @intCast(i16, g_window_move_x);
 
     var new_edge_x = new_x + @intCast(i16, win_geo.width + 2 * g_border_width);
-    if (new_edge_x > screen.x) {
+    if (new_edge_x > screen.geo.x) {
         moveWindow(dpy, e.event, new_x, win_geo.y);
     } else {
         const new_screen = getScreenBasedOnCoords(new_edge_x, win_geo.y, screens);
@@ -1397,8 +1413,8 @@ fn keypressMoveLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
             moveWindow(dpy, e.event, new_x, win_geo.y);
 
             // TODO: @changeWindowScreen
-            _ = screen.removeWindow(win.?.value.id, allocator);
-            new_screen.?.addWindow(win.?.value.id, allocator);
+            _ = screen.removeWindow(win.?.value.id);
+            new_screen.?.addWindow(win.?.value.id);
 
             var group_index = screen.groups.first.?.data;
             var new_group_index = new_screen.?.groups.first.?.data;
@@ -1427,7 +1443,7 @@ fn keypressMoveRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
 
     var new_x = win_geo.x + @intCast(i16, g_window_move_x);
 
-    if (new_x < screen.x + @intCast(i16, screen.width)) {
+    if (new_x < screen.geo.x + @intCast(i16, screen.geo.width)) {
         moveWindow(dpy, e.event, new_x, win_geo.y);
     } else {
         const new_screen = getScreenBasedOnCoords(new_x, win_geo.y, screens);
@@ -1436,8 +1452,8 @@ fn keypressMoveRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
             moveWindow(dpy, e.event, new_x, win_geo.y);
 
             // TODO: @changeWindowScreen
-            _ = screen.removeWindow(win.?.value.id, allocator);
-            new_screen.?.addWindow(win.?.value.id, allocator);
+            _ = screen.removeWindow(win.?.value.id);
+            new_screen.?.addWindow(win.?.value.id);
 
             var group_index = screen.groups.first.?.data;
             var new_group_index = new_screen.?.groups.first.?.data;
@@ -1468,7 +1484,7 @@ fn keypressMoveUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_pr
     var new_y = win_geo.y - @intCast(i16, g_window_move_y);
     var new_edge_y = new_y + @intCast(i16, win_geo.height + 2 * g_border_width);
 
-    if (new_edge_y > screen.y) {
+    if (new_edge_y > screen.geo.y) {
         moveWindow(dpy, e.event, win_geo.x, new_y);
     } else {
         const new_screen = getScreenBasedOnCoords(win_geo.x, new_edge_y, screens);
@@ -1477,8 +1493,8 @@ fn keypressMoveUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_pr
             moveWindow(dpy, e.event, win_geo.x, new_y);
 
             // TODO: @changeWindowScreen
-            _ = screen.removeWindow(win.?.value.id, allocator);
-            new_screen.?.addWindow(win.?.value.id, allocator);
+            _ = screen.removeWindow(win.?.value.id);
+            new_screen.?.addWindow(win.?.value.id);
 
             var group_index = screen.groups.first.?.data;
             var new_group_index = new_screen.?.groups.first.?.data;
@@ -1508,7 +1524,7 @@ fn keypressMoveDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
 
     var new_y = win_geo.y + @intCast(i16, g_window_move_y);
 
-    if (new_y < screen.y + @intCast(i16, screen.height)) {
+    if (new_y < screen.geo.y + @intCast(i16, screen.geo.height)) {
         moveWindow(dpy, e.event, win_geo.x, new_y);
     } else {
         const new_screen = getScreenBasedOnCoords(win_geo.x, new_y, screens);
@@ -1517,8 +1533,8 @@ fn keypressMoveDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
             moveWindow(dpy, e.event, win_geo.x, new_y);
 
             // TODO: @changeWindowScreen
-            _ = screen.removeWindow(win.?.value.id, allocator);
-            new_screen.?.addWindow(win.?.value.id, allocator);
+            _ = screen.removeWindow(win.?.value.id);
+            new_screen.?.addWindow(win.?.value.id);
 
             var group_index = screen.groups.first.?.data;
             var new_group_index = new_screen.?.groups.first.?.data;
@@ -1546,7 +1562,7 @@ fn keypressShiftLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
     var screen = getScreen(win.?.value.screen_id, screens);
 
     var new_x = @intCast(i32, win_geo.x);
-    const tile_width: i32 = @divTrunc(screen.width - 2 * g_screen_padding, g_grid_cols);
+    const tile_width: i32 = @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
 
     const win_total_width = @intCast(i16, win_geo.width + 2 * g_border_width);
     var x_tile_locations = getGridCols(allocator, screen.*) catch {
@@ -1557,13 +1573,13 @@ fn keypressShiftLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
 
     const screen_padding = @intCast(i16, g_screen_padding);
     const win_edge_x = win_geo.x + win_total_width;
-    const win_abs_x = win_geo.x - screen.x - screen_padding;
+    const win_abs_x = win_geo.x - screen.geo.x - screen_padding;
     const win_abs_edge_x = win_abs_x + win_total_width;
     var grid_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_x) / @intToFloat(f32, tile_width)));
     var grid_edge_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_edge_x) / @intToFloat(f32, tile_width)));
 
     var on_left = @rem(win_abs_x, tile_width) == 0;
-    var on_right = (screen.x + @intCast(i16, screen.width) - screen_padding == win_edge_x) or (@rem(win_abs_edge_x, tile_width) == 0);
+    var on_right = (screen.geo.x + @intCast(i16, screen.geo.width) - screen_padding == win_edge_x) or (@rem(win_abs_edge_x, tile_width) == 0);
 
     if (on_left or (@intCast(i32, x_tile_locations.len) == grid_loc)) {
         grid_loc -= 1;
@@ -1576,7 +1592,7 @@ fn keypressShiftLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
     if (grid_loc >= 0 and grid_loc < @intCast(i32, x_tile_locations.len)) {
         new_x = x_tile_locations.at(@intCast(usize, grid_loc));
         const new_edge_x = new_x + win_total_width;
-        const screen_edge = screen.x + @intCast(i32, screen.width) - screen_padding;
+        const screen_edge = screen.geo.x + @intCast(i32, screen.geo.width) - screen_padding;
 
         if ((new_edge_x > screen_edge and win_edge_x < screen_edge)
             or (win_edge_x > screen_edge and new_edge_x < screen_edge)
@@ -1597,8 +1613,8 @@ fn keypressShiftLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
 
         if (new_screen != null and screen.id != new_screen.?.id) {
         warn("screen cont\n");
-            _ = screen.removeWindow(win.?.value.id, allocator);
-            new_screen.?.addWindow(win.?.value.id, allocator);
+            _ = screen.removeWindow(win.?.value.id);
+            new_screen.?.addWindow(win.?.value.id);
 
             const group_index = screen.groups.first.?.data;
             const new_group_index = new_screen.?.groups.first.?.data;
@@ -1610,7 +1626,7 @@ fn keypressShiftLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
             win.?.value.screen_id = new_screen.?.id;
             win.?.value.group_index = new_group_index;
 
-            new_x = new_screen.?.x + @intCast(i16, new_screen.?.width) - screen_padding - win_total_width;
+            new_x = new_screen.?.geo.x + @intCast(i16, new_screen.?.geo.width) - screen_padding - win_total_width;
         }
     }
 
@@ -1631,7 +1647,7 @@ fn keypressShiftRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     var screen = getScreen(win.?.value.screen_id, screens);
 
     var new_x = @intCast(i32, win_geo.x);
-    const tile_width: i32 = @divTrunc(screen.width - 2 * g_screen_padding, g_grid_cols);
+    const tile_width: i32 = @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
 
     const win_total_width = @intCast(i16, win_geo.width + 2 * g_border_width);
     const breakpoints = getGridCols(allocator, screen.*) catch {
@@ -1642,15 +1658,15 @@ fn keypressShiftRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     const brkpts_len = @intCast(i32, breakpoints.len);
 
     const screen_padding = @intCast(i16, g_screen_padding);
-    const screen_edge = screen.x + @intCast(i32, screen.width) - screen_padding;
+    const screen_edge = screen.geo.x + @intCast(i32, screen.geo.width) - screen_padding;
     const win_edge_x = win_geo.x + win_total_width;
-    const win_abs_x = win_geo.x - screen.x - screen_padding;
+    const win_abs_x = win_geo.x - screen.geo.x - screen_padding;
     const win_abs_edge_x = win_abs_x + win_total_width;
     var grid_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_x) / @intToFloat(f32, tile_width)));
     var grid_edge_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_edge_x) / @intToFloat(f32, tile_width)));
 
     const on_left = @rem(win_abs_x, tile_width) == 0;
-    const on_right = (screen.x + @intCast(i16, screen.width) - screen_padding == win_edge_x) or (@rem(win_abs_edge_x, tile_width) == 0);
+    const on_right = (screen.geo.x + @intCast(i16, screen.geo.width) - screen_padding == win_edge_x) or (@rem(win_abs_edge_x, tile_width) == 0);
 
     if (grid_loc != -1 or (on_right and grid_loc == -1)) {
         grid_loc += 1;
@@ -1688,8 +1704,8 @@ fn keypressShiftRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
         if (new_screen != null and screen.id != new_screen.?.id) {
         warn("screen cont\n");
-            _ = screen.removeWindow(win.?.value.id, allocator);
-            new_screen.?.addWindow(win.?.value.id, allocator);
+            _ = screen.removeWindow(win.?.value.id);
+            new_screen.?.addWindow(win.?.value.id);
 
             const group_index = screen.groups.first.?.data;
             const new_group_index = new_screen.?.groups.first.?.data;
@@ -1701,7 +1717,7 @@ fn keypressShiftRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
             win.?.value.screen_id = new_screen.?.id;
             win.?.value.group_index = new_group_index;
 
-            new_x = new_screen.?.x + screen_padding;
+            new_x = new_screen.?.geo.x + screen_padding;
         }
     }
 
@@ -1721,7 +1737,7 @@ fn keypressShiftUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_p
     var screen = getScreen(win.?.value.screen_id, screens);
 
     var new_y = @intCast(i32, win_geo.y);
-    const tile_height: i32 = @divTrunc(screen.height - 2 * g_screen_padding, g_grid_rows);
+    const tile_height: i32 = @divTrunc(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
 
     const win_total_height = @intCast(i16, win_geo.height + 2 * g_border_width);
     var breakpoints = getGridRows(allocator, screen.*) catch {
@@ -1732,13 +1748,13 @@ fn keypressShiftUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_p
 
     const screen_padding = @intCast(i16, g_screen_padding);
     const win_edge_y = win_geo.y + win_total_height;
-    const win_abs_y = win_geo.y - screen.y - screen_padding;
+    const win_abs_y = win_geo.y - screen.geo.y - screen_padding;
     const win_abs_edge_y = win_abs_y + win_total_height;
     var grid_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_y) / @intToFloat(f32, tile_height)));
     var grid_edge_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_edge_y) / @intToFloat(f32, tile_height)));
 
     var on_top = @rem(win_abs_y, tile_height) == 0;
-    var on_bottom = (screen.y + @intCast(i16, screen.height) - screen_padding == win_edge_y) or (@rem(win_abs_edge_y, tile_height) == 0);
+    var on_bottom = (screen.geo.y + @intCast(i16, screen.geo.height) - screen_padding == win_edge_y) or (@rem(win_abs_edge_y, tile_height) == 0);
 
     if (on_top or (@intCast(i32, breakpoints.len) == grid_loc)) {
         grid_loc -= 1;
@@ -1751,7 +1767,7 @@ fn keypressShiftUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_p
     if (grid_loc >= 0 and grid_loc < @intCast(i32, breakpoints.len)) {
         new_y = breakpoints.at(@intCast(usize, grid_loc));
         const new_edge_y = new_y + win_total_height;
-        const screen_edge = screen.y + @intCast(i32, screen.height) - screen_padding;
+        const screen_edge = screen.geo.y + @intCast(i32, screen.geo.height) - screen_padding;
 
         if ((new_edge_y > screen_edge and win_edge_y < screen_edge)
             or (win_edge_y > screen_edge and new_edge_y < screen_edge)
@@ -1772,8 +1788,8 @@ fn keypressShiftUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_p
 
         if (new_screen != null and screen.id != new_screen.?.id) {
         warn("screen cont\n");
-            _ = screen.removeWindow(win.?.value.id, allocator);
-            new_screen.?.addWindow(win.?.value.id, allocator);
+            _ = screen.removeWindow(win.?.value.id);
+            new_screen.?.addWindow(win.?.value.id);
 
             const group_index = screen.groups.first.?.data;
             const new_group_index = new_screen.?.groups.first.?.data;
@@ -1785,7 +1801,7 @@ fn keypressShiftUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_p
             win.?.value.screen_id = new_screen.?.id;
             win.?.value.group_index = new_group_index;
 
-            new_y = new_screen.?.y + @intCast(i16, new_screen.?.height) - screen_padding - win_total_height;
+            new_y = new_screen.?.geo.y + @intCast(i16, new_screen.?.geo.height) - screen_padding - win_total_height;
         }
     }
 
@@ -1805,7 +1821,7 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
     var screen = getScreen(win.?.value.screen_id, screens);
 
     var new_y = @intCast(i32, win_geo.y);
-    const tile_height: i32 = @divTrunc(screen.height - 2 * g_screen_padding, g_grid_rows);
+    const tile_height: i32 = @divTrunc(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
 
     const win_total_height = @intCast(i16, win_geo.height + 2 * g_border_width);
     var breakpoints = getGridRows(allocator, screen.*) catch {
@@ -1816,15 +1832,15 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
     const brkpts_len = @intCast(i32, breakpoints.len);
 
     const screen_padding = @intCast(i16, g_screen_padding);
-    const screen_edge = screen.y + @intCast(i32, screen.height) - screen_padding;
+    const screen_edge = screen.geo.y + @intCast(i32, screen.geo.height) - screen_padding;
     const win_edge_y = win_geo.y + win_total_height;
-    const win_abs_y = win_geo.y - screen.y - screen_padding;
+    const win_abs_y = win_geo.y - screen.geo.y - screen_padding;
     const win_abs_edge_y = win_abs_y + win_total_height;
     var grid_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_y) / @intToFloat(f32, tile_height)));
     var grid_edge_loc = @floatToInt(i32, std.math.floor(@intToFloat(f32, win_abs_edge_y) / @intToFloat(f32, tile_height)));
 
     var on_top = @rem(win_abs_y, tile_height) == 0;
-    var on_bottom = (screen.y + @intCast(i16, screen.height) - screen_padding == win_edge_y) or (@rem(win_abs_edge_y, tile_height) == 0);
+    var on_bottom = (screen.geo.y + @intCast(i16, screen.geo.height) - screen_padding == win_edge_y) or (@rem(win_abs_edge_y, tile_height) == 0);
 
     if (grid_loc != -1 or (on_bottom and grid_loc == -1)) {
         grid_loc += 1;
@@ -1862,8 +1878,8 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
 
         if (new_screen != null and screen.id != new_screen.?.id) {
         warn("screen cont\n");
-            _ = screen.removeWindow(win.?.value.id, allocator);
-            new_screen.?.addWindow(win.?.value.id, allocator);
+            _ = screen.removeWindow(win.?.value.id);
+            new_screen.?.addWindow(win.?.value.id);
 
             const group_index = screen.groups.first.?.data;
             const new_group_index = new_screen.?.groups.first.?.data;
@@ -1875,7 +1891,7 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
             win.?.value.screen_id = new_screen.?.id;
             win.?.value.group_index = new_group_index;
 
-            new_y = new_screen.?.y + screen_padding;
+            new_y = new_screen.?.geo.y + screen_padding;
         }
     }
 
@@ -1919,8 +1935,8 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         }
 
         const half_dim: i32 = @divTrunc(largest_dim, 2) + g_border_width;
-        const x_distance = screen.x + @intCast(i32, screen.width) - win_center.x + half_dim;
-        const y_distance = screen.y + @intCast(i32, screen.height) - win_center.y + half_dim;
+        const x_distance = screen.geo.x + @intCast(i32, screen.geo.width) - win_center.x + half_dim;
+        const y_distance = screen.geo.y + @intCast(i32, screen.geo.height) - win_center.y + half_dim;
         if (x_distance > y_distance) {
             break :blk x_distance;
         } else {
@@ -1976,15 +1992,15 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
     }
 
-    const screen_bottom_y = (screen.y + @intCast(i32, screen.height));
-    const screen_right_x = (screen.x + @intCast(i32, screen.width));
+    const screen_bottom_y = (screen.geo.y + @intCast(i32, screen.geo.height));
+    const screen_right_x = (screen.geo.x + @intCast(i32, screen.geo.width));
     var screen_node = screens.first;
     while (screen_node != null) : (screen_node = screen_node.?.next) {
         if (screen_node.?.data.id == screen.id) continue;
-        // if (is_left and screen_node.?.data.x > screen.x) continue;
+        // if (is_left and screen_node.?.data.x > screen.geo.x) continue;
 
-        const screen_midpoint = screen_node.?.data.y + @intCast(i16, screen_node.?.data.height / 2);
-        if (screen_midpoint < screen.y or screen_midpoint > screen_bottom_y) continue;
+        const screen_midpoint = screen_node.?.data.geo.y + @intCast(i16, screen_node.?.data.geo.height / 2);
+        if (screen_midpoint < screen.geo.y or screen_midpoint > screen_bottom_y) continue;
 
         var screen_window_node = screen_node.?.data.windows.first;
         while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
@@ -2068,8 +2084,8 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
         }
 
         const half_dim: i32 = @divTrunc(largest_dim, 2) + g_border_width;
-        const x_distance = screen.x + @intCast(i32, screen.width) - win_center.x + half_dim;
-        const y_distance = screen.y + @intCast(i32, screen.height) - win_center.y + half_dim;
+        const x_distance = screen.geo.x + @intCast(i32, screen.geo.width) - win_center.x + half_dim;
+        const y_distance = screen.geo.y + @intCast(i32, screen.geo.height) - win_center.y + half_dim;
         if (x_distance > y_distance) {
             break :blk x_distance;
         } else {
@@ -2123,15 +2139,15 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
     }
 
-    const screen_bottom_y = (screen.y + @intCast(i32, screen.height));
-    const screen_right_x = (screen.x + @intCast(i32, screen.width));
+    const screen_bottom_y = (screen.geo.y + @intCast(i32, screen.geo.height));
+    const screen_right_x = (screen.geo.x + @intCast(i32, screen.geo.width));
     var screen_node = screens.first;
     while (screen_node != null) : (screen_node = screen_node.?.next) {
         if (screen_node.?.data.id == screen.id) continue;
-        // if (is_right and screen_node.?.data.x < screen.x) continue;
+        // if (is_right and screen_node.?.data.x < screen.geo.x) continue;
 
-        const screen_midpoint = screen_node.?.data.y + @intCast(i16, screen_node.?.data.height / 2);
-        if (screen_midpoint < screen.y or screen_midpoint > screen_bottom_y) continue;
+        const screen_midpoint = screen_node.?.data.geo.y + @intCast(i16, screen_node.?.data.geo.height / 2);
+        if (screen_midpoint < screen.geo.y or screen_midpoint > screen_bottom_y) continue;
 
         var screen_window_node = screen_node.?.data.windows.first;
         while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
@@ -2214,8 +2230,8 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
         }
 
         const half_dim: i32 = @divTrunc(largest_dim, 2) + g_border_width;
-        const x_distance = screen.x + @intCast(i32, screen.width) - win_center.x + half_dim;
-        const y_distance = screen.y + @intCast(i32, screen.height) - win_center.y + half_dim;
+        const x_distance = screen.geo.x + @intCast(i32, screen.geo.width) - win_center.x + half_dim;
+        const y_distance = screen.geo.y + @intCast(i32, screen.geo.height) - win_center.y + half_dim;
         if (x_distance > y_distance) {
             break :blk x_distance;
         } else {
@@ -2268,15 +2284,15 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
 
     }
 
-    const screen_bottom_y = (screen.y + @intCast(i32, screen.height));
-    const screen_right_x = (screen.x + @intCast(i32, screen.width));
+    const screen_bottom_y = (screen.geo.y + @intCast(i32, screen.geo.height));
+    const screen_right_x = (screen.geo.x + @intCast(i32, screen.geo.width));
     var screen_node = screens.first;
     while (screen_node != null) : (screen_node = screen_node.?.next) {
         if (screen_node.?.data.id == screen.id) continue;
-        // if (is_up and screen_node.?.data.y > screen.y) continue;
+        // if (is_up and screen_node.?.data.y > screen.geo.y) continue;
 
-        const screen_midpoint = screen_node.?.data.x + @intCast(i16, screen_node.?.data.width / 2);
-        if (screen_midpoint < screen.x or screen_midpoint > screen_right_x) continue;
+        const screen_midpoint = screen_node.?.data.geo.x + @intCast(i16, screen_node.?.data.geo.width / 2);
+        if (screen_midpoint < screen.geo.x or screen_midpoint > screen_right_x) continue;
 
         var screen_window_node = screen_node.?.data.windows.first;
         while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
@@ -2359,8 +2375,8 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         }
 
         const half_dim: i32 = @divTrunc(largest_dim, 2) + g_border_width;
-        const x_distance = screen.x + @intCast(i32, screen.width) - win_center.x + half_dim;
-        const y_distance = screen.y + @intCast(i32, screen.height) - win_center.y + half_dim;
+        const x_distance = screen.geo.x + @intCast(i32, screen.geo.width) - win_center.x + half_dim;
+        const y_distance = screen.geo.y + @intCast(i32, screen.geo.height) - win_center.y + half_dim;
         if (x_distance > y_distance) {
             break :blk x_distance;
         } else {
@@ -2414,15 +2430,15 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
     }
 
-    const screen_bottom_y = (screen.y + @intCast(i32, screen.height));
-    const screen_right_x = (screen.x + @intCast(i32, screen.width));
+    const screen_bottom_y = (screen.geo.y + @intCast(i32, screen.geo.height));
+    const screen_right_x = (screen.geo.x + @intCast(i32, screen.geo.width));
     var screen_node = screens.first;
     while (screen_node != null) : (screen_node = screen_node.?.next) {
         if (screen_node.?.data.id == screen.id) continue;
-        // if (is_down and screen_node.?.data.y < screen.y) continue;
+        // if (is_down and screen_node.?.data.y < screen.geo.y) continue;
 
-        const screen_midpoint = screen_node.?.data.x + @intCast(i16, screen_node.?.data.width / 2);
-        if (screen_midpoint < screen.x or screen_midpoint > screen_right_x) continue;
+        const screen_midpoint = screen_node.?.data.geo.x + @intCast(i16, screen_node.?.data.geo.width / 2);
+        if (screen_midpoint < screen.geo.x or screen_midpoint > screen_right_x) continue;
 
         var screen_window_node = screen_node.?.data.windows.first;
         while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
@@ -2493,7 +2509,7 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
     };
 
     var selected_group = &groups.toSlice()[selected_group_index];
-    var mouse_screen = getActiveMouseScreen(screens);
+    var mouse_screen = getActiveMouseScreen(dpy, screens);
     const group_index = mouse_screen.groups.first.?.data;
 
     if (mouse_screen.groups.len == 1 and selected_group.index == group_index) return;
@@ -2504,11 +2520,11 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
         if (screen_node.?.data.groups.len == 1 and screen_node.?.data.groups.first.?.data == selected_group.index) return;
         if (screen_node.?.data.groups.len == 1) continue;
 
-        if (screen_node.?.data.destroyGroup(selected_group.index, allocator)) {
+        if (screen_node.?.data.destroyGroup(selected_group.index)) {
             // Remove and unmap group's windows from screen
             var window_node = selected_group.windows.last;
             while (window_node != null) : (window_node = window_node.?.prev) {
-                if (screen_node.?.data.removeWindow(window_node.?.data, allocator)) {
+                if (screen_node.?.data.removeWindow(window_node.?.data)) {
                     _ = _xcb_unmap_window(dpy, window_node.?.data, &return_cookie);
                 }
             }
@@ -2519,18 +2535,18 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
     // Add and map window to screen
     if (selected_group_index != group_index) {
-        mouse_screen.addGroup(selected_group.index, allocator);
+        mouse_screen.addGroup(selected_group.index);
         var window_node = selected_group.windows.last;
         while (window_node != null) : (window_node = window_node.?.prev) {
             var win = windows.get(window_node.?.data);
             if (win == null) continue;
-            _ = mouse_screen.addWindow(win.?.value.id, allocator);
+            _ = mouse_screen.addWindow(win.?.value.id);
 
             if (win.?.value.screen_id != mouse_screen.id) {
                 // TODO: instead get this from where screen_node variable is used
                 // in a loop ???
                 var old_screen = getScreen(win.?.value.screen_id, screens);
-                old_screen.windowToScreen(dpy, &win.?.value, mouse_screen);
+                old_screen.windowToScreenRender(dpy, &win.?.value, mouse_screen);
 
             }
 
@@ -2623,7 +2639,7 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
                 screen_node.?.data.windows.prepend(new_win_node);
 
                 if (window.screen_id != screen_node.?.data.id) {
-                    screen.windowToScreen(dpy, &window_kv.?.value, &screen_node.?.data);
+                    screen.windowToScreenRender(dpy, &window_kv.?.value, &screen_node.?.data);
                 }
                 // raiseWindow(dpy, window.id);
                 _ = _xcb_map_window(dpy, window.id, &return_cookie);
@@ -2636,7 +2652,7 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
 
     // TODO: Or focus new window the screen the source/target
     // (var window_screen) window was ???
-    if (getActiveMouseScreen(screens).windows.first) |new_focus| {
+    if (getActiveMouseScreen(dpy, screens).windows.first) |new_focus| {
         focusWindow(dpy, new_focus.data, g_active_border_color);
     }
 }
@@ -2742,37 +2758,40 @@ fn buttonpressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_gene
                 if (e_inside.detail != _XCB_BUTTON_INDEX_1) continue;
                 warn("{}\n", e_inside);
 
-                if (getNewScreenOnChange(e_inside.root_x, e_inside.root_y, screens, active_screen)) |new_screen| {
-                    active_screen = new_screen;
-                }
-                if (win.?.value.screen_id != active_screen.id) {
+                var new_screen = getNewScreenOnChange(e_inside.root_x, e_inside.root_y, screens, active_screen) orelse null;
+                // if (getNewScreenOnChange(e_inside.root_x, e_inside.root_y, screens, active_screen)) |new_screen| {
+                //     active_screen = new_screen;
+                // }
+                if (new_screen != null and win.?.value.screen_id != new_screen.?.id) {
                     warn("window has changed screen\n");
 
-                    // changeWindowGroup() new_group_index
-                    var groups_slice = groups.toSlice();
-                    var old_group_index = win.?.value.group_index;
-                    var new_group_index = active_screen.groups.first.?.data;
-                    var group_win_node = groups_slice[old_group_index].windows.first;
-                    while (group_win_node != null) : (group_win_node = group_win_node.?.next) {
-                        if (group_win_node.?.data == win.?.value.id) {
-                            groups_slice[old_group_index].windows.remove(group_win_node.?);
-                            groups_slice[new_group_index].windows.prepend(group_win_node.?);
-                            break;
-                        }
-                    }
+                    win.?.value = active_screen.windowToScreen(&win.?.value, new_screen.?, groups.toSlice());
 
-                    // changeWindowScreen()
-                    var old_screen = getScreen(win.?.value.screen_id, screens);
-                    var node = old_screen.windows.first;
-                    while (node != null) : (node = node.?.next) {
-                        if (node.?.data == win.?.value.id) {
-                            old_screen.windows.remove(node.?);
-                            active_screen.windows.prepend(node.?);
-                            win.?.value.screen_id = active_screen.id;
-                            win.?.value.group_index = new_group_index;
-                            break;
-                        }
-                    }
+                    // changeWindowGroup() new_group_index
+                    // var groups_slice = groups.toSlice();
+                    // var old_group_index = win.?.value.group_index;
+                    // var new_group_index = active_screen.groups.first.?.data;
+                    // var group_win_node = groups_slice[old_group_index].windows.first;
+                    // while (group_win_node != null) : (group_win_node = group_win_node.?.next) {
+                    //     if (group_win_node.?.data == win.?.value.id) {
+                    //         groups_slice[old_group_index].windows.remove(group_win_node.?);
+                    //         groups_slice[new_group_index].windows.prepend(group_win_node.?);
+                    //         break;
+                    //     }
+                    // }
+
+                    // // changeWindowScreen()
+                    // var old_screen = getScreen(win.?.value.screen_id, screens);
+                    // var node = old_screen.windows.first;
+                    // while (node != null) : (node = node.?.next) {
+                    //     if (node.?.data == win.?.value.id) {
+                    //         old_screen.windows.remove(node.?);
+                    //         active_screen.windows.prepend(node.?);
+                    //         win.?.value.screen_id = active_screen.id;
+                    //         win.?.value.group_index = new_group_index;
+                    //         break;
+                    //     }
+                    // }
                 }
             },
             else => {
@@ -2797,12 +2816,12 @@ fn buttonpressMotionMoveWindowInBounds(e: *xcb_button_press_event_t, e_inside: *
 
     var new_win_geometry = inBoundsWindowGeometry(x, y, geo.width, geo.height, screen);
 
-    if (geo.width > @intCast(i32, screen.width)) {
-        new_win_geometry.x = screen.x + @intCast(i32, g_screen_padding);
+    if (geo.width > @intCast(i32, screen.geo.width)) {
+        new_win_geometry.x = screen.geo.x + @intCast(i32, g_screen_padding);
     }
 
-    if (geo.height > @intCast(i32, screen.height)) {
-        new_win_geometry.y = screen.y + @intCast(i32, g_screen_padding);
+    if (geo.height > @intCast(i32, screen.geo.height)) {
+        new_win_geometry.y = screen.geo.y + @intCast(i32, g_screen_padding);
     }
 
     return new_win_geometry;
