@@ -7,7 +7,7 @@ function.
 
 
 Screen:
-[ ] Convert screens variable from LinkedList to ArrayList
+[*] Convert screens variable from LinkedList to ArrayList
 [ ] A screen is added/remove.
 
 
