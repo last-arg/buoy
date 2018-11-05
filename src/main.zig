@@ -20,25 +20,17 @@ const xrandr = @import("Xrandr.zig");
 use @import("c_import.zig");
 use @import("xcb_extern.zig");
 
-// TODO: combine ScreenGeometry and Geometry
-const ScreenGeometry = struct.{
-    x: i16,
-    y: i16,
-    width: u16,
-    height: u16,
-};
-
 const Screen = ScreenFn();
 fn ScreenFn() type {
     return struct.{
         const Self = @This();
         allocator: *Allocator,
         id: u32,
-        geo: ScreenGeometry,
+        geo: Geometry,
         groups: LinkedList(u8),
         windows: LinkedList(xcb_window_t),
 
-        pub fn init(id: u32, group_index: u8, geo: ScreenGeometry, allocator: *Allocator) !Self {
+        pub fn init(id: u32, group_index: u8, geo: Geometry, allocator: *Allocator) !Self {
             var screen = Self.{
                 .id = id,
                 .allocator = allocator,
@@ -47,7 +39,6 @@ fn ScreenFn() type {
                 .windows = LinkedList(xcb_window_t).init(),
             };
 
-            // TODO: add group to window
             var group_node = try screen.groups.createNode(group_index, allocator);
             screen.groups.prepend(group_node);
 
@@ -95,16 +86,12 @@ fn ScreenFn() type {
         }
 
         pub fn windowToScreen(self: *Screen, win: *Window, dest_screen: *Screen, groups: []Group) Window {
-
-            // Remove window from self.windows
             _ = self.removeWindow(win.id);
-            // Remove window from current group(_index)
             groups[win.group_index].removeWindow(win.id, self.allocator);
-            // Add window to dest_screen.windows
+
             dest_screen.addWindow(win.id);
             win.screen_id = dest_screen.id;
             win.group_index = dest_screen.groups.first.?.data;
-            // Add window to dest_screen's first/active group
             groups[win.group_index].addWindow(win.id, self.allocator);
 
             return win.*;
@@ -131,10 +118,11 @@ fn ScreenFn() type {
             return Geometry.{
                 .x = new_x,
                 .y = new_y,
-                .width = @floatToInt(i32, new_width),
-                .height = @floatToInt(i32, new_height),
+                .width = @floatToInt(u16, new_width),
+                .height = @floatToInt(u16, new_height),
             };
         }
+
     };
 }
 
@@ -173,10 +161,10 @@ const Window = struct.{
 };
 
 const Geometry = struct.{
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
+    x: i16,
+    y: i16,
+    width: u16,
+    height: u16,
 };
 
 const Point = struct.{
@@ -406,7 +394,7 @@ pub fn main() !void {
         group_count = 10;
     }
     groups.resize(group_count) catch {
-        panic("Failed to initalize groups' strcutures");
+        panic("Failed to initalize groups' structures");
     };
 
     {
@@ -444,7 +432,7 @@ pub fn main() !void {
         }) {
             var monitor = return_monitors_iter.data.?[0];
 
-            var geo = ScreenGeometry.{
+            var geo = Geometry.{
                 .x = monitor.x,
                 .y = monitor.y,
                 .width = monitor.width,
@@ -913,10 +901,10 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
     }
 
     return Geometry.{
-        .x = new_x,
-        .y = new_y,
-        .width = new_width,
-        .height = new_height,
+        .x = @intCast(i16, new_x),
+        .y = @intCast(i16, new_y),
+        .width = @intCast(u16, new_width),
+        .height = @intCast(u16, new_height),
     };
 }
 
@@ -962,31 +950,12 @@ fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) Ge
     y = std.math.max(sp, y) + screen.geo.y;
 
     return Geometry.{
-        .x = x,
-        .y = y,
-        .width = width,
-        .height = height,
+        .x = @intCast(i16, x),
+        .y = @intCast(i16, y),
+        .width = @intCast(u16, width),
+        .height = @intCast(u16, height),
     };
 }
-
-
-
-
-extern fn errorHandlerStart(dpy: ?*xlib.Display, e: *xlib.XErrorEvent) c_int {
-    return -1;
-}
-
-extern fn errorHandler(dpy: ?*xlib.Display, e: *xlib.XErrorEvent) c_int {
-    warn("error handler\n");
-
-    if (e.error_code == xlib.BadWindow) {
-        warn("ERROR: BadWindow\n");
-        return 0;
-    }
-
-    return errorHandlerStart(dpy, e);
-}
-
 
 
 fn getNewScreenOnChange(x: i16, y: i16, screens: ArrayList(Screen), active_screen: *Screen) ?*Screen {
@@ -1130,17 +1099,7 @@ fn debugWindows(windows: WindowsHashMap) void {
 }
 
 
-
 fn getScreen(screen_id: u32, screens: ArrayList(Screen)) *Screen {
-    // var window_screen_node = screens.first;
-    // while (window_screen_node != null) : (window_screen_node = window_screen_node.?.next) {
-    //     if (window_screen_node.?.data.id == screen_id) {
-    //         break;
-    //     }
-    // }
-
-    // return &window_screen_node.?.data;
-
     for (screens.toSlice()) |screen_item, i| {
         if (screen_item.id == screen_id) {
             return &screens.toSlice()[i];
@@ -1204,12 +1163,10 @@ fn configureWindow(dpy: ?*xcb_connection_t, win: xcb_window_t) void {
 
     config_mask = config_mask | _XCB_CONFIG_WINDOW_WIDTH;
     config_values[i] = 130;
-    // config_values[i] = 130;
     i += 1;
 
     config_mask = config_mask | _XCB_CONFIG_WINDOW_HEIGHT;
     config_values[i] = 105;
-    // config_values[i] = 105;
     i += 1;
 
     config_mask = config_mask | _XCB_CONFIG_WINDOW_BORDER_WIDTH;
@@ -1262,7 +1219,6 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
 
     const tile_width = @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
     const tile_height = @divTrunc(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
-
     var row = u8(0);
     while (row < g_grid_rows) : (row+=1) {
         var col = u8(0);
@@ -1297,7 +1253,6 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
 
 fn getGridCols(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
     var col_locations = ArrayList(i32).init(allocator);
-
     const tile_width = @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
 
     var col = u8(0);
@@ -1312,9 +1267,7 @@ fn getGridCols(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
 
 fn getGridRows(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
     var row_locations = ArrayList(i32).init(allocator);
-
     const tile_height = @divTrunc(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
-
     var row = u8(0);
     while (row < g_grid_rows) : (row+=1) {
         var loc = screen.geo.y + @intCast(i16, tile_height * row + g_screen_padding);
@@ -1329,14 +1282,7 @@ fn drawScreenGrid(dpy: ?*xcb_connection_t, screen_root: xcb_window_t, root_gc_id
     var return_void: xcb_void_cookie_t = undefined;
     var gc_mask = u32(_XCB_GC_FOREGROUND);
     var gc_values = []u32.{g_grid_color};
-    // var pix = xcb_generate_id(dpy);
-    // _ = _xcb_create_pixmap(dpy, 24, pix, screen_root, 600, 500, &return_void);
     _ = _xcb_create_gc(dpy, root_gc_id, screen_root, gc_mask, @ptrCast(?*const c_void, &gc_values), &return_void);
-    // gc_mask = _XCB_GC_FOREGROUND;
-    // gc_values = []u32.{g_default_border_color};
-    // var id = xcb_generate_id(dpy);
-    // _ = _xcb_create_gc(dpy, id, screen_root, gc_mask, @ptrCast(?*const c_void, &gc_values), &return_void);
-
     _ = _xcb_poly_rectangle(dpy, screen_root, root_gc_id, g_grid_total, @ptrCast(?[*]xcb_rectangle_t, rects.ptr), &return_void);
 }
 
@@ -1350,6 +1296,7 @@ fn drawAllScreenGrids(dpy: ?*xcb_connection_t, allocator: *Allocator, screens: A
     }
 }
 
+// @events start
 
 fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
     warn("xcb: key press\n");
@@ -1410,7 +1357,7 @@ fn keypressMoveLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
     var new_x = win_geo.x - @intCast(i16, g_window_move_x);
     win.?.value.geo.x = new_x;
 
-    var new_edge_x = new_x + win_geo.width + @intCast(i16, 2 * g_border_width);
+    var new_edge_x = new_x + @intCast(i16, win_geo.width + 2 * g_border_width);
     if (new_edge_x > screen.geo.x) {
         moveWindow(dpy, e.event, new_x, win_geo.y);
     } else {
@@ -1567,9 +1514,9 @@ fn keypressShiftLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
     var screen = getScreen(win.?.value.screen_id, screens);
 
     var new_x = @intCast(i32, win_geo.x);
-    const tile_width: i32 = @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
+    const tile_width = @intCast(i16, @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols));
 
-    const win_total_width = win_geo.width + @intCast(i16, 2 * g_border_width);
+    const win_total_width = @intCast(i16, win_geo.width + 2 * g_border_width);
     var x_tile_locations = getGridCols(allocator, screen.*) catch {
         warn("Failed to get grid breakpoints\n");
         return;
@@ -1612,7 +1559,7 @@ fn keypressShiftLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
         new_x = right_edge - win_total_width;
     } else {
         const x = @intCast(i16, win_geo.x - @intCast(i16, tile_width));
-        const win_edge_y = @intCast(i16, win_geo.y + win_geo.height + @intCast(i16, 2 * g_border_width));
+        const win_edge_y = win_geo.y + @intCast(i16, win_geo.height + 2 * g_border_width);
         const new_screen = getScreenBasedOnCoords(x, @intCast(i16, win_geo.y) + screen_padding, screens) orelse getScreenBasedOnCoords(x, win_edge_y - screen_padding, screens);
         warn("screen\n");
 
@@ -1637,7 +1584,7 @@ fn keypressShiftLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
 
     if (new_x != win_geo.x) {
         moveWindow(dpy, e.event, new_x, win_geo.y);
-        win.?.value.geo.x = new_x;
+        win.?.value.geo.x = @intCast(i16, new_x);
     }
 
 }
@@ -1652,7 +1599,7 @@ fn keypressShiftRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     var new_x = @intCast(i32, win_geo.x);
     const tile_width: i32 = @divTrunc(screen.geo.width - 2 * g_screen_padding, g_grid_cols);
 
-    const win_total_width = win_geo.width + @intCast(i16, 2 * g_border_width);
+    const win_total_width = @intCast(i16, win_geo.width + 2 * g_border_width);
     const breakpoints = getGridCols(allocator, screen.*) catch {
         warn("Failed to get grid breakpoints\n");
         return;
@@ -1726,7 +1673,7 @@ fn keypressShiftRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
     if (new_x != win_geo.x) {
         moveWindow(dpy, e.event, new_x, win_geo.y);
-        win.?.value.geo.x = new_x;
+        win.?.value.geo.x = @intCast(i16, new_x);
     }
 }
 
@@ -1808,7 +1755,7 @@ fn keypressShiftUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_p
 
     if (new_y != win_geo.y) {
         moveWindow(dpy, e.event, win_geo.x, new_y);
-        win.?.value.geo.y = new_y;
+        win.?.value.geo.y = @intCast(i16, new_y);
     }
 }
 
@@ -1822,7 +1769,7 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
     var new_y = @intCast(i32, win_geo.y);
     const tile_height: i32 = @divTrunc(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
 
-    const win_total_height = win_geo.height + @intCast(i16, 2 * g_border_width);
+    const win_total_height = @intCast(i16, win_geo.height + 2 * g_border_width);
     var breakpoints = getGridRows(allocator, screen.*) catch {
         warn("Failed to get grid breakpoints\n");
         return;
@@ -1870,8 +1817,8 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
         warn("window width < tile width\n");
         new_y = screen_edge - win_total_height;
     } else {
-        const y = @intCast(i16, win_geo.y + win_total_height + @intCast(i16, tile_height));
-        const win_edge_x = @intCast(i16, win_geo.x + win_geo.width) + @intCast(i16, 2 * g_border_width);
+        const y = win_geo.y + @intCast(i16, win_total_height + tile_height);
+        const win_edge_x = win_geo.x + @intCast(i16, win_geo.width + 2 * g_border_width);
         const new_screen = getScreenBasedOnCoords(@intCast(i16, win_geo.x) + screen_padding, y, screens) orelse getScreenBasedOnCoords(win_edge_x - screen_padding, y, screens);
         warn("screen\n");
 
@@ -1896,7 +1843,7 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
 
     if (new_y != win_geo.y) {
         moveWindow(dpy, e.event, win_geo.x, new_y);
-        win.?.value.geo.y = new_y;
+        win.?.value.geo.y = @intCast(i16, new_y);
     }
 
 }
@@ -2803,12 +2750,12 @@ fn buttonpressMotionMoveWindowInBounds(e: *xcb_button_press_event_t, e_inside: *
 
     var new_win_geometry = inBoundsWindowGeometry(x, y, geo.width, geo.height, screen);
 
-    if (geo.width > @intCast(i32, screen.geo.width)) {
-        new_win_geometry.x = screen.geo.x + @intCast(i32, g_screen_padding);
+    if (geo.width > screen.geo.width) {
+        new_win_geometry.x = screen.geo.x + @intCast(i16, g_screen_padding);
     }
 
-    if (geo.height > @intCast(i32, screen.geo.height)) {
-        new_win_geometry.y = screen.geo.y + @intCast(i32, g_screen_padding);
+    if (geo.height > screen.geo.height) {
+        new_win_geometry.y = screen.geo.y + @intCast(i16, g_screen_padding);
     }
 
     return new_win_geometry;
@@ -2818,8 +2765,8 @@ fn buttonpressMotionMoveWindow(e: *xcb_button_press_event_t, e_inside: *xcb_moti
     const xdiff = e_inside.root_x - e.root_x;
     const ydiff = e_inside.root_y - e.root_y;
 
-    const x: i32 = geo.x + xdiff;
-    const y: i32 = geo.y + ydiff;
+    const x: i16 = geo.x + xdiff;
+    const y: i16 = geo.y + ydiff;
 
     return Geometry.{
         .x = x,
@@ -2849,13 +2796,13 @@ fn buttonpressMotionResizeWindowInBounds(e: *xcb_button_press_event_t, e_inside:
 fn buttonpressMotionResizeWindow(e: *xcb_button_press_event_t, e_inside: *xcb_motion_notify_event_t, geo: Geometry) Geometry {
     const xdiff = e_inside.root_x - e.root_x;
     const ydiff = e_inside.root_y - e.root_y;
-    const width = @intCast(i32, geo.width) + xdiff;
-    const height = @intCast(i32, geo.height) + ydiff;
+    const width = @intCast(i16, geo.width) + xdiff;
+    const height = @intCast(i16, geo.height) + ydiff;
 
     return Geometry.{
         .x = geo.x,
         .y = geo.y,
-        .width = std.math.max(@intCast(i32, g_window_min_width), width),
-        .height = std.math.max(@intCast(i32, g_window_min_height), height),
+        .width = @intCast(u16, std.math.max(@intCast(i16, g_window_min_width), width)),
+        .height = @intCast(u16, std.math.max(@intCast(i16, g_window_min_height), height)),
     };
 }

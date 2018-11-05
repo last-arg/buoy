@@ -2,7 +2,7 @@ General:
 [ ] Remove/Replace xlib functions if possible: XStringToKeysym
 [ ] Try to combine functions getWindowGeometryInside and inBoundsWindowGeometry.
 [ ] Convert enums to int (@enumToInt)
-[ ] Code that deals with placing window into another screen should be good candidate for
+[*] Code that deals with placing window into another screen should be good candidate for
 function.
 
 
