@@ -141,12 +141,14 @@ const Group = struct.{
 
     pub fn removeWindow(self: *Group, id: xcb_window_t, allocator: *Allocator) void {
         var slice = self.windows.toOwnedSlice();
+        // var slice = self.windows.toSlice();
         for (slice) |win_id, i| {
             if (id == win_id) {
                 const head = slice[0..i];
                 const tail = slice[i+1..];
 
-                self.windows.appendSlice(head) catch {};
+                self.windows = ArrayList(xcb_window_t).fromOwnedSlice(allocator, head);
+                // self.windows.appendSlice(head) catch {};
                 self.windows.appendSlice(tail) catch {};
 
                 break;
