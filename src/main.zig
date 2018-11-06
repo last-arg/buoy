@@ -680,26 +680,35 @@ warn("{}\n", e);
 
                 if (e.child != 0) continue;
 
-                // @continue
-                // TODO: fix screen crossing check
-                // var current_screen = getActiveMouseScreen(dpy, screens);
-                // var new_screen = getScreenOnLocation(e.root_x, e.root_y, screens);
+                // TODO: try to improve performance
+                var focused_id = getFocusedWindow(dpy);
+                const win = windows.get(focused_id);
+                const mouse_screen = getScreenOnLocation(e.root_x, e.root_y, screens);
+                if (win) |window| {
+                    if (mouse_screen) |m_screen| {
+                        const focused_screen = screens.at(window.value.screen_index);
+                        if (m_screen.index != focused_screen.index) {
+                            unfocusWindow(dpy, focused_id, g_default_border_color);
 
-                // if (new_screen != null) {
-                //     if (current_screen.index == new_screen.?.index) continue;
-                //     warn("{}\n", e);
-                //     var screen = new_screen.?;
-                //     var focused_window = getFocusedWindow(dpy);
+                            const new_focus = blk: {
+                                if (m_screen.windows.first) |node| {
+                                    break :blk node.data;
+                                }
 
-                //     unfocusWindow(dpy, focused_window, g_default_border_color);
+                                break :blk screen_root;
+                            };
 
-                //     if (screen.windows.first) |window| {
-                //         focusWindow(dpy, window.data, g_active_border_color);
-                //     } else {
-                //         focusWindow(dpy, screen_root, g_active_border_color);
-                //     }
-                // }
 
+                            focusWindow(dpy, new_focus, g_active_border_color);
+                        }
+                    }
+                } else if (focused_id == screen_root) {
+                    if (mouse_screen) |m_screen| {
+                        if (m_screen.windows.first) |node| {
+                            focusWindow(dpy, node.data, g_active_border_color);
+                        }
+                    }
+                }
                 _ = xcb_flush(dpy);
             },
             XCB_KEY_PRESS => {
@@ -712,14 +721,8 @@ warn("{}\n", e);
             XCB_ENTER_NOTIFY => {
                 warn("xcb: enter notify\n");
                 var e = @ptrCast(*xcb_enter_notify_event_t, &ev);
-                // TODO: when crossing screen from window to window sometimes
-                // window focusing won't fire. Problem in this if statement.
-                // TODO NOTE: Can also be fixed by removing if statement in
-                // motion notify event.
-                if (e.detail != _XCB_NOTIFY_DETAIL_ANCESTOR
-                    and e.detail != _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) continue;
+                if (e.detail != _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) continue;
 
-                // warn("xcb: enter notify\n");
                 warn("{}\n", e);
 
                 var win = windows.get(e.event);
