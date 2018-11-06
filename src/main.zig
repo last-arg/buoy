@@ -716,7 +716,7 @@ warn("{}\n", e);
             },
             XCB_KEY_RELEASE => {
                 warn("xcb: key release\n");
-                _ = xcb_flush(dpy);
+                // _ = xcb_flush(dpy);
             },
             XCB_ENTER_NOTIFY => {
                 warn("xcb: enter notify\n");
@@ -726,48 +726,28 @@ warn("{}\n", e);
                 warn("{}\n", e);
 
                 var win = windows.get(e.event);
-                var active_screen = getScreen(win.?.value.screen_index, screens);
-                var focused_window = getFocusedWindow(dpy);
-
+                if (win == null) continue;
+                const focused_window = getFocusedWindow(dpy);
                 if (focused_window == win.?.value.id) continue;
+                var active_screen = getScreen(win.?.value.screen_index, screens);
 
                 warn("change window\n");
                 unfocusWindow(dpy, focused_window, g_default_border_color);
                 focusWindow(dpy, win.?.value.id, g_active_border_color);
 
-                // prependWindowToScreen()
-                var win_node = active_screen.windows.first;
-                while (win_node != null) : (win_node = win_node.?.next) {
-                    if (win_node.?.data == e.event) {
-                        active_screen.windows.remove(win_node.?);
-                        active_screen.windows.prepend(win_node.?);
-                        break;
-                    }
-                }
+                _ = active_screen.removeWindow(e.event);
+                active_screen.addWindow(e.event);
 
-                var group_index = win.?.value.group_index;
-                // prependGroupToScreen()
-                var group_node = active_screen.groups.first;
+                const group_index = win.?.value.group_index;
+                const group_node = active_screen.groups.first;
                 if (active_screen.groups.len > 1 and group_node.?.data != group_index) {
-                    while (group_node != null) : (group_node = group_node.?.next) {
-                        if (group_node.?.data == group_index) {
-                            active_screen.groups.remove(group_node.?);
-                            active_screen.groups.prepend(group_node.?);
-                            break;
-                        }
-                    }
+                    _ = active_screen.destroyGroup(group_index);
+                    active_screen.addGroup(group_index);
                 }
 
-                // prependWindowToGroup()
-                var group = groups.toSlice();
-                var group_win_node = group[group_index].windows.first;
-                while (group_win_node != null) : (group_win_node = group_win_node.?.next) {
-                    if (group_win_node.?.data == win.?.value.id) {
-                        group[group_index].windows.remove(group_win_node.?);
-                        group[group_index].windows.prepend(group_win_node.?);
-                        break;
-                    }
-                }
+                var target_group = &groups.toSlice()[group_index];
+                target_group.removeWindow(win.?.value.id, allocator);
+                target_group.addWindow(win.?.value.id, allocator);
 
                 _ = xcb_flush(dpy);
             },
