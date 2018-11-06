@@ -126,30 +126,38 @@ fn ScreenFn() type {
     };
 }
 
+fn printSlice(g: []u32) void {
+    for (g) |id| {
+        warn("{} | ", id);
+    }
+    warn("\n");
+}
 
 // TODO: add allocator field
 const Group = struct.{
     index: u8,
-    windows: LinkedList(xcb_window_t),
+    windows: ArrayList(xcb_window_t),
     str_value: []u8,
 
     pub fn removeWindow(self: *Group, id: xcb_window_t, allocator: *Allocator) void {
-        var node = self.windows.first;
-        while (node != null) : (node = node.?.next) {
-            if (id == node.?.data) {
-                self.windows.remove(node.?);
-                self.windows.destroyNode(node.?, allocator);
+        var slice = self.windows.toOwnedSlice();
+        for (slice) |win_id, i| {
+            if (id == win_id) {
+                const head = slice[0..i];
+                const tail = slice[i+1..];
+
+                self.windows.appendSlice(head) catch {};
+                self.windows.appendSlice(tail) catch {};
+
                 break;
             }
         }
     }
 
     pub fn addWindow(self: *Group, id: xcb_window_t, allocator: *Allocator) void {
-        const node = self.windows.createNode(id, allocator) catch |err| {
-            warn("Error was raised when trying to add new window to Group. Error msg: {}\n", err);
-            return;
+        self.windows.insert(0, id) catch {
+            warn("Group.addWidow: Failed to add window.");
         };
-        self.windows.prepend(node);
     }
 };
 
@@ -409,7 +417,7 @@ pub fn main() !void {
             };
             var group = Group.{
                 .index = i,
-                .windows = LinkedList(xcb_window_t).init(),
+                .windows = ArrayList(xcb_window_t).init(allocator),
                 .str_value = val,
             };
             groups.set(i, group);
@@ -510,25 +518,28 @@ pub fn main() !void {
                 warn("{}\n", e);
 
                 if (windows.get(e.window)) |window| {
-                    var group_windows = &groups.toSlice()[window.value.group_index].windows;
-                    var group_window_node = group_windows.first;
-                    while (group_window_node != null) : (group_window_node = group_window_node.?.next) {
-                        if (group_window_node.?.data == window.value.id) {
-                            group_windows.remove(group_window_node.?);
-                            group_windows.destroyNode(group_window_node.?, allocator);
-                            break;
-                        }
-                    }
+                    var group = &groups.toSlice()[window.value.group_index];
+                    group.removeWindow(window.value.id, allocator);
+
+                    // var group_window_node = group_windows.first;
+                    // while (group_window_node != null) : (group_window_node = group_window_node.?.next) {
+                    //     if (group_window_node.?.data == window.value.id) {
+                    //         group_windows.remove(group_window_node.?);
+                    //         group_windows.destroyNode(group_window_node.?, allocator);
+                    //         break;
+                    //     }
+                    // }
 
                     var screen = getScreen(window.value.screen_index, screens);
-                    var screen_window_node = screen.windows.first;
-                    while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-                        if (screen_window_node.?.data == window.value.id) {
-                            screen.windows.remove(screen_window_node.?);
-                            screen.windows.destroyNode(screen_window_node.?, allocator);
-                            break;
-                        }
-                    }
+                    _ = screen.removeWindow(window.value.id);
+                    // var screen_window_node = screen.windows.first;
+                    // while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
+                    //     if (screen_window_node.?.data == window.value.id) {
+                    //         screen.windows.remove(screen_window_node.?);
+                    //         screen.windows.destroyNode(screen_window_node.?, allocator);
+                    //         break;
+                    //     }
+                    // }
 
                     // TODO: handle group if there is no windows in it anymore ???
                     // Either remove it or keep it around. At the moment
@@ -1000,7 +1011,7 @@ fn debugScreenWindows(ll: ArrayList(Screen)) void {
 }
 
 
-fn addWindow(dpy: ?*xcb_connection_t, allocator: *Allocator, win: xcb_window_t, screen: *Screen, group: *Group, windows: *WindowsHashMap) !void {
+fn addWindow(dpy: ?*xcb_connection_t, allocator: *Allocator, win: xcb_window_t, screen: *Screen, group: *Group, windows: *WindowsHashMap) void {
     var return_geo: xcb_get_geometry_cookie_t = undefined;
     _ = _xcb_get_geometry(dpy, win, &return_geo);
     var geo = xcb_get_geometry_reply(dpy, return_geo, null);
@@ -1034,12 +1045,8 @@ fn addWindow(dpy: ?*xcb_connection_t, allocator: *Allocator, win: xcb_window_t, 
     };
     // var kv = windows.get(win);
 
-    // Add into screen's window linked list
-    var win_node = try screen.windows.createNode(win, allocator);
-    screen.windows.prepend(win_node);
-    // Add into groups' window linked list
-    var group_win_node = try group.windows.createNode(win, allocator);
-    group.windows.prepend(group_win_node);
+    _ = screen.addWindow(win);
+    group.addWindow(win, allocator);
 }
 
 
@@ -1074,9 +1081,8 @@ fn debugGroups(groups: ArrayList(Group)) void {
     warn("\n----Groups----\n");
     for (groups.toSliceConst()) |group| {
         warn("Group {} | windows:", group.index);
-        var win = group.windows.first;
-        while (win != null) : (win = win.?.next) {
-            warn(" {}", win.?.data);
+        for (group.windows.toSlice()) |win_id| {
+            warn(" {}", win_id);
         }
         warn("\n");
     }
@@ -2309,10 +2315,12 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
         if (item.destroyGroup(selected_group.index)) {
             // Remove and unmap group's windows from screen
-            var window_node = selected_group.windows.last;
-            while (window_node != null) : (window_node = window_node.?.prev) {
-                if (item.removeWindow(window_node.?.data)) {
-                    _ = _xcb_unmap_window(dpy, window_node.?.data, &return_cookie);
+            // var window_node = selected_group.windows.last;
+            // while (window_node != null) : (window_node = window_node.?.prev) {
+            // TODO: reverse ???
+            for (selected_group.windows.toSlice()) |win_id| {
+                if (item.removeWindow(win_id)) {
+                    _ = _xcb_unmap_window(dpy, win_id, &return_cookie);
                 }
             }
             break;
@@ -2323,9 +2331,11 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
     // Add and map window to screen
     if (selected_group_index != group_index) {
         mouse_screen.addGroup(selected_group.index);
-        var window_node = selected_group.windows.last;
-        while (window_node != null) : (window_node = window_node.?.prev) {
-            var win = windows.get(window_node.?.data);
+        // var window_node = selected_group.windows.last;
+        // while (window_node != null) : (window_node = window_node.?.prev) {
+        // TODO: reverse ???
+        for (selected_group.windows.toSlice()) |win_id| {
+            var win = windows.get(win_id);
             if (win == null) continue;
             _ = mouse_screen.addWindow(win.?.value.id);
 
@@ -2382,40 +2392,18 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
     var window = window_kv.?.value;
     if (dest_group.index == window.group_index) return;
 
-    const new_node = dest_group.windows.createNode(window.id, allocator) catch {
-        warn("keypressMoveWindow function: Failed to create new window node.");
-        return;
-    };
-
     var src_group = &groups.toSlice()[window.group_index];
-    var group_win_node = src_group.windows.first;
-    // Remove window from source group
-    while (group_win_node != null) : (group_win_node = group_win_node.?.next) {
-        if (group_win_node.?.data == window.id) {
-            src_group.windows.remove(group_win_node.?);
-            src_group.windows.destroyNode(group_win_node.?, allocator);
-            break;
-        }
-    }
+    src_group.removeWindow(window.id, allocator);
 
     var screen = getScreen(window.screen_index, screens);
-
-    // var screen_node = screens.first;
-    // Remove window from screen
-    // screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
-    for (screens.toSlice()) |screen_item, i| {
-        var item = screens.at(i);
-        if (item.removeWindow(window.id)) break;
-    }
+    _ = screen.removeWindow(window.id);
 
     _ = _xcb_unmap_window(dpy, window.id, &return_cookie);
-    dest_group.windows.prepend(new_node);
+    dest_group.addWindow(window.id, allocator);
 
-
-    // screen_node = screens.first;
-    // screen_loop: while (screen_node != null) : (screen_node = screen_node.?.next) {
-    screen_loop: for (screens.toSlice()) |screen_item, i| {
-        var item = screens.at(i);
+    var slice = screens.toSlice();
+    screen_loop: for (slice) |_, i| {
+        var item = &slice[i];
         var screen_group_node = item.groups.first;
         while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
             if (screen_group_node.?.data == dest_group.index) {
@@ -2426,7 +2414,7 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
                 item.windows.prepend(new_win_node);
 
                 if (window.screen_index != item.index) {
-                    window_kv.?.value.geo = screen.recalculateWindowGeometry(window.geo, &item);
+                    window_kv.?.value.geo = screen.recalculateWindowGeometry(window.geo, item);
                     window_kv.?.value.screen_index = item.index;
                     moveWindow(dpy, window_kv.?.value.id, window_kv.?.value.geo.x, window_kv.?.value.geo.y);
                     resizeWindow(dpy, window_kv.?.value.id, @intCast(u32, window_kv.?.value.geo.width), @intCast(u32, window_kv.?.value.geo.height));
