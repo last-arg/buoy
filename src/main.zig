@@ -732,35 +732,33 @@ warn("{}\n", e);
             XCB_ENTER_NOTIFY => {
                 warn("xcb: enter notify\n");
                 var e = @ptrCast(*xcb_enter_notify_event_t, &ev);
-                if (e.detail != _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) continue;
-
                 warn("{}\n", e);
 
-                var win = windows.get(e.event);
-                if (win == null) continue;
-                const focused_window = getFocusedWindow(dpy);
-                if (focused_window == win.?.value.id) continue;
-                var active_screen = getScreen(win.?.value.screen_index, screens);
+                if (windows.get(e.event)) |win| {
+                    const focused_window = getFocusedWindow(dpy);
+                    if (focused_window == win.value.id) continue;
+                    var active_screen = getScreen(win.value.screen_index, screens);
 
-                warn("change window\n");
-                unfocusWindow(dpy, focused_window, g_default_border_color);
-                focusWindow(dpy, win.?.value.id, g_active_border_color);
+                    warn("change window\n");
+                    unfocusWindow(dpy, focused_window, g_default_border_color);
+                    focusWindow(dpy, win.value.id, g_active_border_color);
 
-                _ = active_screen.removeWindow(e.event);
-                active_screen.addWindow(e.event);
+                    _ = active_screen.removeWindow(e.event);
+                    active_screen.addWindow(e.event);
 
-                const group_index = win.?.value.group_index;
-                const group_node = active_screen.groups.first;
-                if (active_screen.groups.len > 1 and group_node.?.data != group_index) {
-                    _ = active_screen.destroyGroup(group_index);
-                    active_screen.addGroup(group_index);
+                    const group_index = win.value.group_index;
+                    const group_node = active_screen.groups.first;
+                    if (active_screen.groups.len > 1 and group_node.?.data != group_index) {
+                        _ = active_screen.destroyGroup(group_index);
+                        active_screen.addGroup(group_index);
+                    }
+
+                    var target_group = &groups.toSlice()[group_index];
+                    target_group.removeWindow(win.value.id, allocator);
+                    target_group.addWindow(win.value.id, allocator);
+
+                    _ = xcb_flush(dpy);
                 }
-
-                var target_group = &groups.toSlice()[group_index];
-                target_group.removeWindow(win.?.value.id, allocator);
-                target_group.addWindow(win.?.value.id, allocator);
-
-                _ = xcb_flush(dpy);
             },
             else => {
                 warn("xcb: else -> {}\n", ev);
