@@ -28,7 +28,7 @@ fn ScreenFn() type {
         index: u8,
         geo: Geometry,
         groups: LinkedList(u8),
-        windows: LinkedList(xcb_window_t),
+        windows: ArrayList(xcb_window_t),
 
         pub fn init(index: u8, geo: Geometry, allocator: *Allocator) !Self {
             var screen = Self.{
@@ -36,7 +36,7 @@ fn ScreenFn() type {
                 .allocator = allocator,
                 .geo = geo,
                 .groups = LinkedList(u8).init(),
-                .windows = LinkedList(xcb_window_t).init(),
+                .windows = ArrayList(xcb_window_t).init(allocator),
             };
 
             var group_node = try screen.groups.createNode(index, allocator);
@@ -46,19 +46,23 @@ fn ScreenFn() type {
         }
 
         pub fn addWindow(self: *Screen, id: xcb_window_t) void {
-            const node = self.windows.createNode(id, self.allocator) catch |err| {
-                warn("Error was raised when trying to add new window to Screen. Error msg: {}\n", err);
-                return;
+            self.windows.insert(0, id) catch {
+                warn("Screen.addWidow: Failed to add window.");
             };
-            self.windows.prepend(node);
         }
 
         pub fn removeWindow(self: *Screen, id: xcb_window_t) bool {
-            var node = self.windows.first;
-            while (node != null) : (node = node.?.next) {
-                if (id == node.?.data) {
-                    self.windows.remove(node.?);
-                    self.windows.destroyNode(node.?, self.allocator);
+            var slice = self.windows.toOwnedSlice();
+            // var slice = self.windows.toSlice();
+            for (slice) |win_id, i| {
+                if (id == win_id) {
+                    const head = slice[0..i];
+                    const tail = slice[i+1..];
+
+                    // self.windows = ArrayList(xcb_window_t).fromOwnedSlice(self.allocator, head);
+                    self.windows.appendSlice(head) catch {};
+                    self.windows.appendSlice(tail) catch {};
+
                     return true;
                 }
             }
@@ -503,8 +507,9 @@ pub fn main() !void {
 
         }
 
-        if (getActiveMouseScreen(dpy, screens).windows.first) |win| {
-            focusWindow(dpy, win.data, g_active_border_color);
+        const mouse_screen = getActiveMouseScreen(dpy, screens);
+        if (mouse_screen.windows.len > 0) {
+            focusWindow(dpy, mouse_screen.windows.at(0), g_active_border_color);
         }
     }
 
@@ -523,25 +528,8 @@ pub fn main() !void {
                     var group = &groups.toSlice()[window.value.group_index];
                     group.removeWindow(window.value.id, allocator);
 
-                    // var group_window_node = group_windows.first;
-                    // while (group_window_node != null) : (group_window_node = group_window_node.?.next) {
-                    //     if (group_window_node.?.data == window.value.id) {
-                    //         group_windows.remove(group_window_node.?);
-                    //         group_windows.destroyNode(group_window_node.?, allocator);
-                    //         break;
-                    //     }
-                    // }
-
                     var screen = getScreen(window.value.screen_index, screens);
                     _ = screen.removeWindow(window.value.id);
-                    // var screen_window_node = screen.windows.first;
-                    // while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-                    //     if (screen_window_node.?.data == window.value.id) {
-                    //         screen.windows.remove(screen_window_node.?);
-                    //         screen.windows.destroyNode(screen_window_node.?, allocator);
-                    //         break;
-                    //     }
-                    // }
 
                     // TODO: handle group if there is no windows in it anymore ???
                     // Either remove it or keep it around. At the moment
@@ -551,10 +539,11 @@ pub fn main() !void {
 
                     // TODO: or instead focus window on the screen the mouse
                     // cursor is
-                    if (screen.windows.first) |new_window| {
+                    if (screen.windows.len > 0) {
+                        const new_window = screen.windows.at(0);
                         // TODO: rearrange Screen groups if new window's group index
                         // is different
-                        var new_window_info = windows.get(new_window.data);
+                        var new_window_info = windows.get(new_window);
                         if (new_window_info != null and window.value.group_index != new_window_info.?.value.group_index) {
                             warn("group index changed\n");
                             var screen_group_node = screen.groups.first;
@@ -566,7 +555,7 @@ pub fn main() !void {
                                 }
                             }
                         }
-                        focusWindow(dpy, new_window.data, g_active_border_color);
+                        focusWindow(dpy, new_window, g_active_border_color);
                         _ = xcb_flush(dpy);
                     }
                 }
@@ -704,8 +693,8 @@ warn("{}\n", e);
                             unfocusWindow(dpy, focused_id, g_default_border_color);
 
                             const new_focus = blk: {
-                                if (m_screen.windows.first) |node| {
-                                    break :blk node.data;
+                                if (m_screen.windows.len > 0) {
+                                    break :blk m_screen.windows.at(0);
                                 }
 
                                 break :blk screen_root;
@@ -717,8 +706,8 @@ warn("{}\n", e);
                     }
                 } else if (focused_id == screen_root) {
                     if (mouse_screen) |m_screen| {
-                        if (m_screen.windows.first) |node| {
-                            focusWindow(dpy, node.data, g_active_border_color);
+                        if (m_screen.windows.len > 0) {
+                            focusWindow(dpy, m_screen.windows.at(0), g_active_border_color);
                         }
                     }
                 }
@@ -850,7 +839,6 @@ fn debugMouse(dpy: ?*xlib.Display, default_root: xlib.Window) void {
     warn("child id: {}\n", child_);
     warn("root pos: {}x{}\n", x, y);
     warn("win pos :{}x{}\n", win_x, win_y);
-    // warn("{}\n", mask);
 }
 
 
@@ -972,17 +960,16 @@ fn debugScreens(screens: ArrayList(Screen), windows: WindowsHashMap) void {
         warn(" | groups:");
         debugGroupsArray(screen.groups);
         warn(" | windows:");
-        debugWindowsList(screen.windows, windows);
+        debugWindowsArray(screen.windows, windows);
         warn("\n");
     }
 }
 
-fn debugWindowsList(screen_windows: LinkedList(xcb_window_t), windows: WindowsHashMap) void {
-    var item = screen_windows.first;
-    while (item != null) : (item = item.?.next) {
-        var win = windows.get(item.?.data);
+fn debugWindowsArray(screen_windows: ArrayList(xcb_window_t), windows: WindowsHashMap) void {
+    for (screen_windows.toSlice()) |win_id| {
+        var win = windows.get(win_id);
         if (win != null) {
-            warn(" {}({})", item.?.data, win.?.value.group_index);
+            warn(" {}({})", win_id, win.?.value.group_index);
         }
     }
 }
@@ -1716,9 +1703,8 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
     const largest_distance = blk: {
         var largest_dim: u16 = 0;
-        var screen_window_node = screen.windows.first.?.next;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+        for (screen.windows.toSlice()) |win_id| {
+            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
             if (geo.width > largest_dim) {
@@ -1749,16 +1735,11 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         .y = win_center.y + largest_distance,
     };
 
-    warn("win_center: {}\n", win_center);
-    warn("t1: {}\n", t1);
-    warn("t2: {}\n", t2);
-
-    var window_node = screen.windows.first.?.next;
     // NOTE: left, up = 0 | right, down = maxInt(u32)
     var closest_win: xcb_window_t = 0;
     var closest_win_distance: u16 = std.math.maxInt(u16);
-    while (window_node != null) : (window_node = window_node.?.next) {
-        _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
+    for (screen.windows.toSlice()) |win_id| {
+        _ = _xcb_get_geometry(dpy, win_id, &return_geo);
         const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
         var closest_win_point = Point.{
@@ -1776,12 +1757,12 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
             };
 
             if (new_distance == 0 or new_distance == closest_win_distance) {
-                if (window_node.?.data < win.?.value.id and window_node.?.data > closest_win) {
-                    closest_win = window_node.?.data;
+                if (win_id < win.?.value.id and win_id > closest_win) {
+                    closest_win = win_id;
                     closest_win_distance = new_distance;
                 }
             } else if (new_distance < closest_win_distance) {
-                closest_win = window_node.?.data;
+                closest_win = win_id;
                 closest_win_distance = new_distance;
             } 
         }
@@ -1790,18 +1771,15 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
     const screen_bottom_y = (screen.geo.y + @intCast(i32, screen.geo.height));
     const screen_right_x = (screen.geo.x + @intCast(i32, screen.geo.width));
-    // var screen_node = screens.first;
-    // while (screen_node != null) : (screen_node = screen_node.?.next) {
-    for (screens.toSlice()) |screen_item| {
+    for (screens.toSlice()) |screen_item, i| {
         if (screen_item.index == screen.index) continue;
         // if (is_left and screen_item.x > screen.geo.x) continue;
 
         const screen_midpoint = screen_item.geo.y + @intCast(i16, screen_item.geo.height / 2);
         if (screen_midpoint < screen.geo.y or screen_midpoint > screen_bottom_y) continue;
 
-        var screen_window_node = screen_item.windows.first;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+        for (screen_item.windows.toSlice()) |win_id| {
+            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
             const x_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
             if (x_midpoint > win_center.x) continue;
@@ -1820,26 +1798,27 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
             };
 
             if (new_distance == 0 or new_distance == closest_win_distance) {
-                if (screen_window_node.?.data < win.?.value.id and screen_window_node.?.data > closest_win) {
-                    closest_win = screen_window_node.?.data;
+                if (win_id < win.?.value.id and win_id > closest_win) {
+                    closest_win = win_id;
                     closest_win_distance = new_distance;
+                    new_screen = &screens.toSlice()[i];
                 }
             } else if (new_distance < closest_win_distance) {
-                closest_win = screen_window_node.?.data;
+                closest_win = win_id;
                 closest_win_distance = new_distance;
+                new_screen = &screens.toSlice()[i];
             } 
         }
 
     }
 
     if (closest_win != 0 and closest_win != std.math.maxInt(u32)) {
-        var screen_window_node = new_screen.windows.first.?.next;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            if (screen_window_node.?.data == closest_win) {
-                new_screen.windows.remove(screen_window_node.?);
-                new_screen.windows.prepend(screen_window_node.?);
-                break;
-            }
+        _ = new_screen.removeWindow(closest_win);
+        new_screen.addWindow(closest_win);
+        if (windows.get(closest_win)) |window| {
+            var group = &groups.toSlice()[window.value.group_index];
+            group.removeWindow(closest_win, allocator);
+            group.addWindow(closest_win, allocator);
         }
         unfocusWindow(dpy, win.?.value.id, g_default_border_color);
         focusWindow(dpy, closest_win, g_active_border_color);
@@ -1866,9 +1845,9 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
     const largest_distance = blk: {
         var largest_dim: u16 = 0;
-        var screen_window_node = screen.windows.first.?.next;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+
+        for (screen.windows.toSlice()) |win_id| {
+            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
             if (geo.width > largest_dim) {
@@ -1900,13 +1879,12 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
         .y = win_center.y + largest_distance,
     };
 
-    var window_node = screen.windows.first.?.next;
     // NOTE: left, up = 0 | right, down = maxInt(u32)
     var closest_win: xcb_window_t = std.math.maxInt(u32);
-
     var closest_win_distance: u16 = std.math.maxInt(u16);
-    while (window_node != null) : (window_node = window_node.?.next) {
-        _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
+    // while (window_node != null) : (window_node = window_node.?.next) {
+    for (screen.windows.toSlice()) |win_id| {
+        _ = _xcb_get_geometry(dpy, win_id, &return_geo);
         const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
         var closest_win_point = Point.{
@@ -1924,12 +1902,12 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
             };
 
             if (new_distance == 0 or new_distance == closest_win_distance) {
-                if (window_node.?.data > win.?.value.id and window_node.?.data < closest_win) {
-                    closest_win = window_node.?.data;
+                if (win_id > win.?.value.id and win_id < closest_win) {
+                    closest_win = win_id;
                     closest_win_distance = new_distance;
                 }
             } else if (new_distance < closest_win_distance) {
-                closest_win = window_node.?.data;
+                closest_win = win_id;
                 closest_win_distance = new_distance;
             } 
         }
@@ -1938,16 +1916,14 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
     const screen_bottom_y = (screen.geo.y + @intCast(i32, screen.geo.height));
     const screen_right_x = (screen.geo.x + @intCast(i32, screen.geo.width));
-    for (screens.toSlice()) |screen_item| {
-
+    for (screens.toSlice()) |screen_item, i| {
         if (screen_item.index == screen.index) continue;
 
         const screen_midpoint = screen_item.geo.y + @intCast(i16, screen_item.geo.height / 2);
         if (screen_midpoint < screen.geo.y or screen_midpoint > screen_bottom_y) continue;
 
-        var screen_window_node = screen_item.windows.first;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+        for (screen_item.windows.toSlice()) |win_id| {
+            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
             const x_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
             if (x_midpoint < win_center.x) continue;
@@ -1966,26 +1942,27 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
             };
 
             if (new_distance == 0 or new_distance == closest_win_distance) {
-                if (screen_window_node.?.data > win.?.value.id and screen_window_node.?.data < closest_win) {
-                    closest_win = screen_window_node.?.data;
+                if (win_id > win.?.value.id and win_id < closest_win) {
+                    closest_win = win_id;
                     closest_win_distance = new_distance;
+                    new_screen = &screens.toSlice()[i];
                 }
             } else if (new_distance < closest_win_distance) {
-                closest_win = screen_window_node.?.data;
+                closest_win = win_id;
                 closest_win_distance = new_distance;
+                new_screen = &screens.toSlice()[i];
             } 
         }
 
     }
 
     if (closest_win != 0 and closest_win != std.math.maxInt(u32)) {
-        var screen_window_node = new_screen.windows.first.?.next;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            if (screen_window_node.?.data == closest_win) {
-                new_screen.windows.remove(screen_window_node.?);
-                new_screen.windows.prepend(screen_window_node.?);
-                break;
-            }
+        _ = new_screen.removeWindow(closest_win);
+        new_screen.addWindow(closest_win);
+        if (windows.get(closest_win)) |window| {
+            var group = &groups.toSlice()[window.value.group_index];
+            group.removeWindow(closest_win, allocator);
+            group.addWindow(closest_win, allocator);
         }
         unfocusWindow(dpy, win.?.value.id, g_default_border_color);
         focusWindow(dpy, closest_win, g_active_border_color);
@@ -2011,9 +1988,9 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
 
     const largest_distance = blk: {
         var largest_dim: u16 = 0;
-        var screen_window_node = screen.windows.first.?.next;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+
+        for (screen.windows.toSlice()) |win_id| {
+            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
             if (geo.width > largest_dim) {
@@ -2044,13 +2021,11 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
         .y = win_center.y - largest_distance,
     };
 
-    var window_node = screen.windows.first.?.next;
     // NOTE: left, up = 0 | right, down = maxInt(u32)
     var closest_win: xcb_window_t = 0;
-
     var closest_win_distance: u16 = std.math.maxInt(u16);
-    while (window_node != null) : (window_node = window_node.?.next) {
-        _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
+    for (screen.windows.toSlice()) |win_id| {
+        _ = _xcb_get_geometry(dpy, win_id, &return_geo);
         const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
         var closest_win_point = Point.{
@@ -2068,12 +2043,12 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
             };
 
             if (new_distance == 0 or new_distance == closest_win_distance) {
-                if (window_node.?.data < win.?.value.id and window_node.?.data > closest_win) {
-                    closest_win = window_node.?.data;
+                if (win_id < win.?.value.id and win_id > closest_win) {
+                    closest_win = win_id;
                     closest_win_distance = new_distance;
                 }
             } else if (new_distance < closest_win_distance) {
-                closest_win = window_node.?.data;
+                closest_win = win_id;
                 closest_win_distance = new_distance;
             } 
         }
@@ -2082,15 +2057,13 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
 
     const screen_bottom_y = (screen.geo.y + @intCast(i32, screen.geo.height));
     const screen_right_x = (screen.geo.x + @intCast(i32, screen.geo.width));
-    for (screens.toSlice()) |screen_item| {
+    for (screens.toSlice()) |screen_item, i| {
         if (screen_item.index == screen.index) continue;
 
         const screen_midpoint = screen_item.geo.x + @intCast(i16, screen_item.geo.width / 2);
         if (screen_midpoint < screen.geo.x or screen_midpoint > screen_right_x) continue;
-
-        var screen_window_node = screen_item.windows.first;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+        for (screen_item.windows.toSlice()) |win_id| {
+            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
             const y_midpoint = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width);
 
@@ -2110,26 +2083,27 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
             };
 
             if (new_distance == 0 or new_distance == closest_win_distance) {
-                if (screen_window_node.?.data < win.?.value.id and screen_window_node.?.data > closest_win) {
-                    closest_win = screen_window_node.?.data;
+                if (win_id < win.?.value.id and win_id > closest_win) {
+                    closest_win = win_id;
                     closest_win_distance = new_distance;
+                    new_screen = &screens.toSlice()[i];
                 }
             } else if (new_distance < closest_win_distance) {
-                closest_win = screen_window_node.?.data;
+                closest_win = win_id;
                 closest_win_distance = new_distance;
+                new_screen = &screens.toSlice()[i];
             } 
         }
 
     }
 
     if (closest_win != 0 and closest_win != std.math.maxInt(u32)) {
-        var screen_window_node = new_screen.windows.first.?.next;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            if (screen_window_node.?.data == closest_win) {
-                new_screen.windows.remove(screen_window_node.?);
-                new_screen.windows.prepend(screen_window_node.?);
-                break;
-            }
+        _ = new_screen.removeWindow(closest_win);
+        new_screen.addWindow(closest_win);
+        if (windows.get(closest_win)) |window| {
+            var group = &groups.toSlice()[window.value.group_index];
+            group.removeWindow(closest_win, allocator);
+            group.addWindow(closest_win, allocator);
         }
         unfocusWindow(dpy, win.?.value.id, g_default_border_color);
         focusWindow(dpy, closest_win, g_active_border_color);
@@ -2154,9 +2128,8 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
     const largest_distance = blk: {
         var largest_dim: u16 = 0;
-        var screen_window_node = screen.windows.first.?.next;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+        for (screen.windows.toSlice()) |win_id| {
+            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
             if (geo.width > largest_dim) {
@@ -2188,13 +2161,12 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         .y = win_center.y + largest_distance,
     };
 
-    var window_node = screen.windows.first.?.next;
     // NOTE: left, up = 0 | right, down = maxInt(u32)
     var closest_win: xcb_window_t = std.math.maxInt(u32);
     var closest_win_distance: u16 = std.math.maxInt(u16);
 
-    while (window_node != null) : (window_node = window_node.?.next) {
-        _ = _xcb_get_geometry(dpy, window_node.?.data, &return_geo);
+    for (screen.windows.toSlice()) |win_id| {
+        _ = _xcb_get_geometry(dpy, win_id, &return_geo);
         const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
         var closest_win_point = Point.{
@@ -2212,12 +2184,12 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
             };
 
             if (new_distance == 0 or new_distance == closest_win_distance) {
-                if (window_node.?.data > win.?.value.id and window_node.?.data < closest_win) {
-                    closest_win = window_node.?.data;
+                if (win_id > win.?.value.id and win_id < closest_win) {
+                    closest_win = win_id;
                     closest_win_distance = new_distance;
                 }
             } else if (new_distance < closest_win_distance) {
-                closest_win = window_node.?.data;
+                closest_win = win_id;
                 closest_win_distance = new_distance;
             } 
         }
@@ -2226,16 +2198,14 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
     const screen_bottom_y = (screen.geo.y + @intCast(i32, screen.geo.height));
     const screen_right_x = (screen.geo.x + @intCast(i32, screen.geo.width));
-    for (screens.toSlice()) |screen_item| {
+    for (screens.toSlice()) |screen_item, i| {
 
         if (screen_item.index == screen.index) continue;
 
         const screen_midpoint = screen_item.geo.x + @intCast(i16, screen_item.geo.width / 2);
         if (screen_midpoint < screen.geo.x or screen_midpoint > screen_right_x) continue;
-
-        var screen_window_node = screen_item.windows.first;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            _ = _xcb_get_geometry(dpy, screen_window_node.?.data, &return_geo);
+        for (screen_item.windows.toSlice()) |win_id| {
+            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
             const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
             const y_midpoint = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width);
 
@@ -2255,26 +2225,27 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
             };
 
             if (new_distance == 0 or new_distance == closest_win_distance) {
-                if (screen_window_node.?.data > win.?.value.id and screen_window_node.?.data < closest_win) {
-                    closest_win = screen_window_node.?.data;
+                if (win_id > win.?.value.id and win_id < closest_win) {
+                    closest_win = win_id;
                     closest_win_distance = new_distance;
+                    new_screen = &screens.toSlice()[i];
                 }
             } else if (new_distance < closest_win_distance) {
-                closest_win = screen_window_node.?.data;
+                closest_win = win_id;
                 closest_win_distance = new_distance;
+                new_screen = &screens.toSlice()[i];
             } 
         }
 
     }
 
     if (closest_win != 0 and closest_win != std.math.maxInt(u32)) {
-        var screen_window_node = new_screen.windows.first.?.next;
-        while (screen_window_node != null) : (screen_window_node = screen_window_node.?.next) {
-            if (screen_window_node.?.data == closest_win) {
-                new_screen.windows.remove(screen_window_node.?);
-                new_screen.windows.prepend(screen_window_node.?);
-                break;
-            }
+        _ = new_screen.removeWindow(closest_win);
+        new_screen.addWindow(closest_win);
+        if (windows.get(closest_win)) |window| {
+            var group = &groups.toSlice()[window.value.group_index];
+            group.removeWindow(closest_win, allocator);
+            group.addWindow(closest_win, allocator);
         }
         unfocusWindow(dpy, win.?.value.id, g_default_border_color);
         focusWindow(dpy, closest_win, g_active_border_color);
@@ -2331,8 +2302,6 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
     // Add and map window to screen
     if (selected_group_index != group_index) {
         mouse_screen.addGroup(selected_group.index);
-        // var window_node = selected_group.windows.last;
-        // while (window_node != null) : (window_node = window_node.?.prev) {
         // TODO: reverse ???
         for (selected_group.windows.toSlice()) |win_id| {
             var win = windows.get(win_id);
@@ -2355,10 +2324,10 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
         }
     }
 
-    if (mouse_screen.windows.first) |window_id| {
+    if (mouse_screen.windows.len > 0) {
         const focused_window = getFocusedWindow(dpy);
         unfocusWindow(dpy, focused_window, g_default_border_color);
-        focusWindow(dpy, window_id.data, g_active_border_color);
+        focusWindow(dpy, mouse_screen.windows.at(0), g_active_border_color);
     }
 }
 
@@ -2376,7 +2345,6 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
             var group = @intToPtr(*Group, @ptrToInt(&g));
             const sym = @intCast(u32, xlib.XStringToKeysym(@ptrCast(?[*]const u8, group.str_value[0..].ptr)));
             if (sym == keysym) {
-                // break :blk @intToPtr(*Group, @ptrToInt(&g));
                 break :blk i;
             }
         }
@@ -2407,11 +2375,7 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
         var screen_group_node = item.groups.first;
         while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
             if (screen_group_node.?.data == dest_group.index) {
-                var new_win_node = item.windows.createNode(window.id, allocator) catch {
-                    warn("keypressMoveWindow function: Failed to create new window node.");
-                    return;
-                };
-                item.windows.prepend(new_win_node);
+                item.addWindow(window.id);
 
                 if (window.screen_index != item.index) {
                     window_kv.?.value.geo = screen.recalculateWindowGeometry(window.geo, item);
@@ -2430,8 +2394,9 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
 
     // TODO: Or focus new window the screen the source/target
     // (var window_screen) window was ???
-    if (getActiveMouseScreen(dpy, screens).windows.first) |new_focus| {
-        focusWindow(dpy, new_focus.data, g_active_border_color);
+    const mouse_screen = getActiveMouseScreen(dpy, screens);
+    if (mouse_screen.windows.len > 0) {
+        focusWindow(dpy, mouse_screen.windows.at(0), g_active_border_color);
     }
 }
 
