@@ -27,6 +27,7 @@ fn ScreenFn() type {
         allocator: *Allocator,
         index: u8,
         geo: Geometry,
+        // @continue
         groups: LinkedList(u8),
         windows: ArrayList(xcb_window_t),
 
@@ -1061,7 +1062,7 @@ fn getActiveMouseScreen(dpy: ?*xcb_connection_t, screens: ArrayList(Screen)) *Sc
     var pointer_reply = xcb_query_pointer_reply(dpy, return_pointer, null);
     var pointer = pointer_reply.?[0];
 
-    return getScreenOnLocation(pointer.root_x, pointer.root_y, screens) orelse &screens.at(0);
+    return getScreenOnLocation(pointer.root_x, pointer.root_y, screens) orelse &screens.toSlice()[0];
 }
 
 fn debugGroups(groups: ArrayList(Group)) void {
