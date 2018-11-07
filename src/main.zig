@@ -131,13 +131,6 @@ fn ScreenFn() type {
     };
 }
 
-fn printSlice(g: []u32) void {
-    for (g) |id| {
-        warn("{} | ", id);
-    }
-    warn("\n");
-}
-
 // TODO: add allocator field
 const Group = struct.{
     index: u8,
@@ -215,33 +208,6 @@ const g_mask_alt = @intCast(u16, @enumToInt(XCB_MOD_MASK_1));
 const g_mask_ctrl = @intCast(u16, @enumToInt(XCB_MOD_MASK_CONTROL));
 const g_mask_shift = @intCast(u16, @enumToInt(XCB_MOD_MASK_SHIFT));
 
-// TODO: Make 'Move', 'Shift', 'Change' into Direction union ???
-const KeyFunc = union(enum).{
-    Move: @typeOf(keypressMoveLeft),
-    Shift: @typeOf(keypressShiftLeft),
-    Change: @typeOf(keypressChangeLeft),
-    WindowToGroup: @typeOf(keypressWindowToGroup),
-    ToggleGroup: @typeOf(keypressToggleGroup),
-    Spawn: []const []const u8,
-    Debug: []const []const u8,
-};
-
-const Key = struct.{
-    const Self = @This();
-    char: [1] u8,
-    mod: u16,
-    func: KeyFunc,
-
-    pub fn create(char: [1]u8, mod: u16, func: KeyFunc) Self {
-        return Self.{
-            .char = char,
-            .mod = mod,
-            .func = func,
-        };
-    }
-};
-
-
 const MouseAction = enum.{
     Resize,
     Move,
@@ -272,46 +238,54 @@ var mouse_mapping = []MouseEvent.{
     MouseEvent.create(@intCast(u8, @enumToInt(XCB_BUTTON_INDEX_3)), g_mod | g_mask_shift, MouseAction.Resize),
 };
 
+const Direction = enum.{
+    Left,
+    Right,
+    Up,
+    Down,
+};
 
+const Action = union(enum).{
+    Move: Direction,
+    Change: Direction,
+    Shift: Direction,
+    ToggleGroup: void,
+    WindowToGroup: void,
+    Spawn: []const []const u8,
+    Debug: []const []const u8,
+};
+
+
+const Key = struct.{
+    const Self = @This();
+    // TODO: try to remove 'c string'
+    char: [*]const u8,
+    mod: u16,
+    action: Action,
+
+    pub fn create(char: [*]const u8, mod: u16, action: Action) Self {
+        return Self.{
+            .char = char,
+            .mod = mod,
+            .action = action,
+        };
+    }
+};
+
+// NOTE: At the moment it is generated in compile time.
+// Unlike 'keymap' variable which needs runtime.
 var root_keymap = []Key.{
-    Key.create("d", g_mod, KeyFunc.{.Debug = []const []const u8.{"all"}}),
+    Key.create(c"d", g_mod, Action.{.Debug = []const []const u8.{"all"}}),
 
-    Key.create("t", g_mod, KeyFunc.{.Spawn = []const []const u8.{"xterm"}}),
-    Key.create("r", g_mod, KeyFunc.{.Spawn = []const []const u8.{"st"}}),
+    Key.create(c"t", g_mod, Action.{.Spawn = []const []const u8.{"xterm"}}),
+    Key.create(c"r", g_mod, Action.{.Spawn = []const []const u8.{"st"}}),
 
-    Key.create("1", g_mod, KeyFunc.{.ToggleGroup = keypressToggleGroup}),
-    Key.create("2", g_mod, KeyFunc.{.ToggleGroup = keypressToggleGroup}),
-    Key.create("3", g_mod, KeyFunc.{.ToggleGroup = keypressToggleGroup}),
-    Key.create("4", g_mod, KeyFunc.{.ToggleGroup = keypressToggleGroup}),
-    Key.create("5", g_mod, KeyFunc.{.ToggleGroup = keypressToggleGroup}),
+    Key.create(c"1", g_mod, Action.{.ToggleGroup = {}}),
+    Key.create(c"2", g_mod, Action.{.ToggleGroup = {}}),
+    Key.create(c"3", g_mod, Action.{.ToggleGroup = {}}),
+    Key.create(c"4", g_mod, Action.{.ToggleGroup = {}}),
+    Key.create(c"5", g_mod, Action.{.ToggleGroup = {}}),
 };
-
-var keymap = []Key.{
-    Key.create("h", g_mod | g_mask_ctrl, KeyFunc.{.Move = keypressMoveLeft}),
-    Key.create("l", g_mod | g_mask_ctrl, KeyFunc.{.Move = keypressMoveRight}),
-    Key.create("k", g_mod | g_mask_ctrl, KeyFunc.{.Move = keypressMoveUp}),
-    Key.create("j", g_mod | g_mask_ctrl, KeyFunc.{.Move = keypressMoveDown}),
-
-    Key.create("h", g_mod | g_mask_shift, KeyFunc.{.Shift = keypressShiftLeft}),
-    Key.create("l", g_mod | g_mask_shift, KeyFunc.{.Shift = keypressShiftRight}),
-    Key.create("k", g_mod | g_mask_shift, KeyFunc.{.Shift = keypressShiftUp}),
-    Key.create("j", g_mod | g_mask_shift, KeyFunc.{.Shift = keypressShiftDown}),
-
-    Key.create("h", g_mod, KeyFunc.{.Change = keypressChangeLeft}),
-    Key.create("l", g_mod, KeyFunc.{.Change = keypressChangeRight}),
-    Key.create("k", g_mod, KeyFunc.{.Change = keypressChangeUp}),
-    Key.create("j", g_mod, KeyFunc.{.Change = keypressChangeDown}),
-
-    Key.create("1", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
-    Key.create("2", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
-    Key.create("3", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
-    Key.create("4", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
-    Key.create("5", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
-
-    Key.create("5", g_mod | g_mask_shift, KeyFunc.{.WindowToGroup = keypressWindowToGroup}),
-
-};
-
 
 pub fn main() !void {
     var dpy = xcb_connect(null, null);
@@ -320,6 +294,30 @@ pub fn main() !void {
     // ------- CONFIG -------
     var group_count: u8 = 10;
     g_grid_total = g_grid_rows * g_grid_cols;
+
+    // Set keyboard mappings
+    var keymap = []Key.{
+        Key.create(c"h", g_mod | g_mask_ctrl, Action.{.Move = Direction.Left}),
+        Key.create(c"l", g_mod | g_mask_ctrl, Action.{.Move = Direction.Right}),
+        Key.create(c"k", g_mod | g_mask_ctrl, Action.{.Move = Direction.Up}),
+        Key.create(c"j", g_mod | g_mask_ctrl, Action.{.Move = Direction.Down}),
+
+        Key.create(c"h", g_mod | g_mask_shift, Action.{.Shift = Direction.Left}),
+        Key.create(c"l", g_mod | g_mask_shift, Action.{.Shift = Direction.Right}),
+        Key.create(c"k", g_mod | g_mask_shift, Action.{.Shift = Direction.Up}),
+        Key.create(c"j", g_mod | g_mask_shift, Action.{.Shift = Direction.Down}),
+
+        Key.create(c"h", g_mod, Action.{.Change = Direction.Left}),
+        Key.create(c"l", g_mod, Action.{.Change = Direction.Right}),
+        Key.create(c"k", g_mod, Action.{.Change = Direction.Up}),
+        Key.create(c"j", g_mod, Action.{.Change = Direction.Down}),
+
+        Key.create(c"1", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
+        Key.create(c"2", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
+        Key.create(c"3", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
+        Key.create(c"4", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
+        Key.create(c"5", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
+    };
 
     // TODO: Change/Add different allocator(s)
     const allocator = std.heap.c_allocator;
@@ -355,7 +353,7 @@ pub fn main() !void {
         var keycode: xcb_keycode_t = undefined;
 
         for (root_keymap) |key| {
-            keysym = xlib.XStringToKeysym(&key.char);
+            keysym = xlib.XStringToKeysym(key.char);
             keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
 
             _ = _xcb_grab_key(dpy, 1, screen_root, key.mod, keycode, _XCB_GRAB_MODE_ASYNC, _XCB_GRAB_MODE_ASYNC, &return_cookie);
@@ -503,7 +501,7 @@ pub fn main() !void {
 
             configureWindow(dpy, win);
             resizeAndMoveWindow(dpy, win, active_screen);
-            setWindowEvents(dpy, win);
+            setWindowEvents(dpy, win, keymap[0..]);
             _ = addWindow(dpy, allocator, win, active_screen, group, &windows);
 
         }
@@ -630,7 +628,7 @@ warn("{}\n", e);
                 var group = &groups.toSlice()[group_index];
 
 
-                setWindowEvents(dpy, e.window);
+                setWindowEvents(dpy, e.window, keymap[0..]);
 
                 // TODO: set window location and dimensions
                 resizeAndMoveWindow(dpy, e.window, active_screen);
@@ -715,7 +713,8 @@ warn("{}\n", e);
                 _ = xcb_flush(dpy);
             },
             XCB_KEY_PRESS => {
-                keypressEvent(allocator, dpy, ev, screens, groups, windows);
+                warn("xcb: key press before function call\n");
+                keypressEvent(allocator, dpy, ev, screens, groups, windows, keymap[0..]);
             },
             XCB_KEY_RELEASE => {
                 warn("xcb: key release\n");
@@ -1077,7 +1076,7 @@ fn debugGroups(groups: ArrayList(Group)) void {
 }
 
 
-fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t) void {
+fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t, keymap: []Key) void {
     var return_void_pointer: xcb_void_cookie_t = undefined;
     var key_symbols = xcb_key_symbols_alloc(dpy);
     var keysym: xlib.KeySym = undefined;
@@ -1088,7 +1087,7 @@ fn setWindowEvents(dpy: ?*xcb_connection_t, window: xcb_window_t) void {
     }
 
     for (keymap) |key| {
-        keysym = xlib.XStringToKeysym(&key.char);
+        keysym = xlib.XStringToKeysym(key.char);
         keycode = xcb_key_symbols_get_keycode(key_symbols, @intCast(u32, keysym)).?[0];
 
         _ = _xcb_grab_key(dpy, 1, window, key.mod, keycode, _XCB_GRAB_MODE_ASYNC,
@@ -1240,9 +1239,8 @@ fn drawAllScreenGrids(dpy: ?*xcb_connection_t, allocator: *Allocator, screens: A
     }
 }
 
-// @events start
 
-fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
+fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap, keymap: []Key) void {
     warn("xcb: key press\n");
     const e = @intToPtr(*xcb_key_press_event_t, @ptrToInt(&ev));
     // warn("{}\n", e);
@@ -1252,34 +1250,58 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
     xcb_key_symbols_free(key_symbols);
 
     for (root_keymap) |key| {
-        if (key.mod == e.state and keysym == @intCast(u32, xlib.XStringToKeysym(&key.char))) {
-            switch (key.func) {
-                KeyFunc.Move,
-                KeyFunc.Shift,
-                KeyFunc.Change,
-                KeyFunc.WindowToGroup => return,
-                KeyFunc.Spawn => |app| keypressSpawn(allocator, app),
-                KeyFunc.ToggleGroup => |f| f(allocator, dpy, e, screens, groups, windows),
-                KeyFunc.Debug => {
+        if (key.mod == e.state and keysym == @intCast(u32, xlib.XStringToKeysym(key.char))) {
+            switch (key.action) {
+                Action.Spawn => |app| keypressSpawn(allocator, app),
+                Action.ToggleGroup => keypressToggleGroup(allocator, dpy, e, screens, groups, windows),
+                Action.Debug => {
                     debugScreens(screens, windows);
                     debugWindows(windows);
                     debugGroups(groups);
                 },
+                Action.Move,
+                Action.Shift,
+                Action.Change,
+                Action.WindowToGroup => return,
             }
             break; // TODO: change to return after refactor
         }
     }
 
     for (keymap) |key| {
-        if (key.mod == e.state and keysym == @intCast(u32, xlib.XStringToKeysym(&key.char))) {
-            switch (key.func) {
-                KeyFunc.Move => |f| f(allocator, dpy, e, screens, groups, windows),
-                KeyFunc.Shift => |f| f(allocator, dpy, e, screens, groups, windows),
-                KeyFunc.Change => |f| f(allocator, dpy, e, screens, groups, windows),
-                KeyFunc.WindowToGroup => |f| f(allocator, dpy, e, screens, groups, windows),
-                KeyFunc.Spawn,
-                KeyFunc.Debug,
-                KeyFunc.ToggleGroup => return,
+        if (key.mod == e.state and keysym == @intCast(u32, xlib.XStringToKeysym(key.char))) {
+            switch (key.action) {
+                Action.Move => |direction| {
+                    warn("dir: {}\n", direction);
+                    switch (direction) {
+                        Direction.Left => keypressMoveLeft(allocator, dpy, e, screens, groups, windows),
+                        Direction.Right => keypressMoveRight(allocator, dpy, e, screens, groups, windows),
+                        Direction.Up => keypressMoveUp(allocator, dpy, e, screens, groups, windows),
+                        Direction.Down => keypressMoveDown(allocator, dpy, e, screens, groups, windows),
+                    }
+                },
+                Action.Shift => |direction| {
+                    warn("dir: {}\n", direction);
+                    switch (direction) {
+                        Direction.Left => keypressShiftLeft(allocator, dpy, e, screens, groups, windows),
+                        Direction.Right => keypressShiftRight(allocator, dpy, e, screens, groups, windows),
+                        Direction.Up => keypressShiftUp(allocator, dpy, e, screens, groups, windows),
+                        Direction.Down => keypressShiftDown(allocator, dpy, e, screens, groups, windows),
+                    }
+                },
+                Action.Change => |direction| {
+                    warn("dir: {}\n", direction);
+                    switch (direction) {
+                        Direction.Left => keypressChangeLeft(allocator, dpy, e, screens, groups, windows),
+                        Direction.Right => keypressChangeRight(allocator, dpy, e, screens, groups, windows),
+                        Direction.Up => keypressChangeUp(allocator, dpy, e, screens, groups, windows),
+                        Direction.Down => keypressChangeDown(allocator, dpy, e, screens, groups, windows),
+                    }
+                },
+                Action.WindowToGroup => keypressWindowToGroup(allocator, dpy, e, screens, groups, windows),
+                Action.Spawn,
+                Action.Debug,
+                Action.ToggleGroup => return,
             }
             break; // TODO: change to return after refactor
         }
@@ -2281,7 +2303,7 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
     // See if group is on any of the screens
     for (screens.toSlice()) |screen_item, i| {
-        var item = screens.at(i);
+        var item = &screens.toSlice()[i];
         if (item.groups.len == 1 and item.groups.first.?.data == selected_group.index) return;
         if (item.groups.len == 1) continue;
 
@@ -2367,6 +2389,7 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
     var screen = getScreen(window.screen_index, screens);
     _ = screen.removeWindow(window.id);
 
+    unfocusWindow(dpy, window.id, g_default_border_color);
     _ = _xcb_unmap_window(dpy, window.id, &return_cookie);
     dest_group.addWindow(window.id, allocator);
 
@@ -2399,6 +2422,8 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
     if (mouse_screen.windows.len > 0) {
         focusWindow(dpy, mouse_screen.windows.at(0), g_active_border_color);
     }
+
+    _ = xcb_flush(dpy);
 }
 
 fn keypressSpawn(allocator: *Allocator, argv: []const []const u8) void {
