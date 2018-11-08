@@ -8,7 +8,6 @@ const Allocator = mem.Allocator;
 const os = std.os;
 const child = os.ChildProcess;
 const ArrayList = std.ArrayList;
-const LinkedList = std.LinkedList;
 const hash_map = std.hash_map;
 const HashMap = std.HashMap;
 
@@ -27,8 +26,7 @@ fn ScreenFn() type {
         allocator: *Allocator,
         index: u8,
         geo: Geometry,
-        // @continue
-        groups: LinkedList(u8),
+        groups: ArrayList(u8),
         windows: ArrayList(xcb_window_t),
 
         pub fn init(index: u8, geo: Geometry, allocator: *Allocator) !Self {
@@ -36,12 +34,11 @@ fn ScreenFn() type {
                 .index = index,
                 .allocator = allocator,
                 .geo = geo,
-                .groups = LinkedList(u8).init(),
+                .groups = ArrayList(u8).init(allocator),
                 .windows = ArrayList(xcb_window_t).init(allocator),
             };
 
-            var group_node = try screen.groups.createNode(index, allocator);
-            screen.groups.prepend(group_node);
+            try screen.groups.append(index);
 
             return screen;
         }
@@ -54,13 +51,11 @@ fn ScreenFn() type {
 
         pub fn removeWindow(self: *Screen, id: xcb_window_t) bool {
             var slice = self.windows.toOwnedSlice();
-            // var slice = self.windows.toSlice();
             for (slice) |win_id, i| {
                 if (id == win_id) {
                     const head = slice[0..i];
                     const tail = slice[i+1..];
 
-                    // self.windows = ArrayList(xcb_window_t).fromOwnedSlice(self.allocator, head);
                     self.windows.appendSlice(head) catch {};
                     self.windows.appendSlice(tail) catch {};
 
@@ -70,24 +65,27 @@ fn ScreenFn() type {
             return false;
         }
 
-        pub fn destroyGroup(self: *Screen, id: u8) bool {
-            var node = self.groups.first;
-            while (node != null) : (node = node.?.next) {
-                if (id == node.?.data) {
-                    self.groups.remove(node.?);
-                    self.groups.destroyNode(node.?, self.allocator);
+        pub fn removeGroup(self: *Screen, id: u8) bool {
+            var slice = self.groups.toOwnedSlice();
+            for (slice) |win_id, i| {
+                if (id == win_id) {
+                    const head = slice[0..i];
+                    const tail = slice[i+1..];
+
+                    self.groups.appendSlice(head) catch {};
+                    self.groups.appendSlice(tail) catch {};
+
                     return true;
                 }
             }
             return false;
+
         }
 
         pub fn addGroup(self: *Screen, id: u8) void {
-            const node = self.groups.createNode(id, self.allocator) catch |err| {
-                warn("Error was raised when trying to add new group to Screen. Error msg: {}\n", err);
-                return;
+            self.groups.insert(0, id) catch {
+                warn("Screen.addWidow: Failed to add window.");
             };
-            self.groups.prepend(node);
         }
 
         pub fn windowToScreen(self: *Screen, win: *Window, dest_screen: *Screen, groups: []Group) Window {
@@ -96,7 +94,7 @@ fn ScreenFn() type {
 
             dest_screen.addWindow(win.id);
             win.screen_index = dest_screen.index;
-            win.group_index = dest_screen.groups.first.?.data;
+            win.group_index = dest_screen.groups.at(0);
             groups[win.group_index].addWindow(win.id, self.allocator);
 
             return win.*;
@@ -139,14 +137,12 @@ const Group = struct.{
 
     pub fn removeWindow(self: *Group, id: xcb_window_t, allocator: *Allocator) void {
         var slice = self.windows.toOwnedSlice();
-        // var slice = self.windows.toSlice();
         for (slice) |win_id, i| {
             if (id == win_id) {
                 const head = slice[0..i];
                 const tail = slice[i+1..];
 
                 self.windows = ArrayList(xcb_window_t).fromOwnedSlice(allocator, head);
-                // self.windows.appendSlice(head) catch {};
                 self.windows.appendSlice(tail) catch {};
 
                 break;
@@ -272,6 +268,7 @@ const Key = struct.{
     }
 };
 
+// TODO: move it into main ???
 // NOTE: At the moment it is generated in compile time.
 // Unlike 'keymap' variable which needs runtime.
 var root_keymap = []Key.{
@@ -494,7 +491,7 @@ pub fn main() !void {
 
                 break :blk &screens.toSlice()[0];
             };
-            var group_index = active_screen.groups.first.?.data;
+            var group_index = active_screen.groups.at(0);
             var group = &groups.toSlice()[group_index];
 
             _ = _xcb_change_window_attributes(dpy, win, event_mask, @ptrCast(?*const c_void, &values), &return_cookie);
@@ -545,14 +542,8 @@ pub fn main() !void {
                         var new_window_info = windows.get(new_window);
                         if (new_window_info != null and window.value.group_index != new_window_info.?.value.group_index) {
                             warn("group index changed\n");
-                            var screen_group_node = screen.groups.first;
-                            while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
-                                if (new_window_info.?.value.group_index == screen_group_node.?.data) {
-                                    screen.groups.remove(screen_group_node.?);
-                                    screen.groups.prepend(screen_group_node.?);
-                                    break;
-                                }
-                            }
+                            _ = screen.removeGroup(new_window_info.?.value.group_index);
+                            screen.addGroup(new_window_info.?.value.group_index);
                         }
                         focusWindow(dpy, new_window, g_active_border_color);
                         _ = xcb_flush(dpy);
@@ -624,7 +615,7 @@ warn("{}\n", e);
                 var return_void_pointer: xcb_void_cookie_t = undefined;
 
                 var active_screen = getActiveMouseScreen(dpy, screens);
-                var group_index = active_screen.groups.first.?.data;
+                var group_index = active_screen.groups.at(0);
                 var group = &groups.toSlice()[group_index];
 
 
@@ -737,14 +728,14 @@ warn("{}\n", e);
                     _ = active_screen.removeWindow(e.event);
                     active_screen.addWindow(e.event);
 
-                    const group_index = win.value.group_index;
-                    const group_node = active_screen.groups.first;
-                    if (active_screen.groups.len > 1 and group_node.?.data != group_index) {
-                        _ = active_screen.destroyGroup(group_index);
-                        active_screen.addGroup(group_index);
+                    const win_group_index = win.value.group_index;
+                    const group_index = active_screen.groups.at(0);
+                    if (active_screen.groups.len > 1 and group_index != win_group_index) {
+                        _ = active_screen.removeGroup(win_group_index);
+                        active_screen.addGroup(win_group_index);
                     }
 
-                    var target_group = &groups.toSlice()[group_index];
+                    var target_group = &groups.toSlice()[win_group_index];
                     target_group.removeWindow(win.value.id, allocator);
                     target_group.addWindow(win.value.id, allocator);
 
@@ -958,7 +949,7 @@ fn debugScreens(screens: ArrayList(Screen), windows: WindowsHashMap) void {
         var screen = item.?;
         warn("Screen |> index: {}", screen.index);
         warn(" | groups:");
-        debugGroupsArray(screen.groups);
+        debugGroupsArray(screen.groups.toSlice());
         warn(" | windows:");
         debugWindowsArray(screen.windows, windows);
         warn("\n");
@@ -974,10 +965,9 @@ fn debugWindowsArray(screen_windows: ArrayList(xcb_window_t), windows: WindowsHa
     }
 }
 
-fn debugGroupsArray(groups: LinkedList(u8)) void {
-    var group_node = groups.first;
-    while (group_node != null) : (group_node = group_node.?.next) {
-        warn(" {}", group_node.?.data);
+fn debugGroupsArray(groups: []u8) void {
+    for (groups) |group_index| {
+        warn(" {}", group_index);
     }
 }
 
@@ -2297,17 +2287,17 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
     var selected_group = &groups.toSlice()[selected_group_index];
     var mouse_screen = getActiveMouseScreen(dpy, screens);
-    const group_index = mouse_screen.groups.first.?.data;
+    const group_index = mouse_screen.groups.at(0);
 
     if (mouse_screen.groups.len == 1 and selected_group.index == group_index) return;
 
     // See if group is on any of the screens
     for (screens.toSlice()) |screen_item, i| {
         var item = &screens.toSlice()[i];
-        if (item.groups.len == 1 and item.groups.first.?.data == selected_group.index) return;
+        if (item.groups.len == 1 and item.groups.at(0) == selected_group.index) return;
         if (item.groups.len == 1) continue;
 
-        if (item.destroyGroup(selected_group.index)) {
+        if (item.removeGroup(selected_group.index)) {
             // Remove and unmap group's windows from screen
             // var window_node = selected_group.windows.last;
             // while (window_node != null) : (window_node = window_node.?.prev) {
@@ -2396,9 +2386,8 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
     var slice = screens.toSlice();
     screen_loop: for (slice) |_, i| {
         var item = &slice[i];
-        var screen_group_node = item.groups.first;
-        while (screen_group_node != null) : (screen_group_node = screen_group_node.?.next) {
-            if (screen_group_node.?.data == dest_group.index) {
+        for (item.groups.toSlice()) |group_index| {
+            if (group_index == dest_group.index) {
                 item.addWindow(window.id);
 
                 if (window.screen_index != item.index) {
