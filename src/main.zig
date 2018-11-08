@@ -1702,11 +1702,12 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
 fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
     warn("keypress change left\n");
 
-    var return_geo: xcb_get_geometry_cookie_t = undefined;
-    _ = _xcb_get_geometry(dpy, e.event, &return_geo);
-    const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+    // var return_geo: xcb_get_geometry_cookie_t = undefined;
+    // _ = _xcb_get_geometry(dpy, e.event, &return_geo);
+    // const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
 
     const win = windows.get(e.event);
+    const win_geo = win.geo;
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
