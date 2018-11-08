@@ -39,3 +39,22 @@ Shift + {y,u,b,n,g}
 Shift + {h,j,k,l} 
   [*] Move window to the next closest grid line/border. 
   [?] Use window middle point as anchor instead top-left. Middle anchor will cause difficulties with resizing window.
+
+
+Data oriented design:
+Collect all windows that had their position of dimension changed in a variable. Loop through this collection after checking events.
+const windowChange = struct.{
+  id: window_id,
+  change_mask: []u16, 
+  change_values: []i32, 
+};
+ArrayList(windowChange)
+
+
+Collection of window ids that are mapped. Order might matter.
+ArraList(window_id)
+
+Collection of window ids that are unmapped. Order matters.
+ArraList(window_id)
+
+Window changes screen. Make a separated array or use one of the other collections to check? If using other collection than either windowChange or mapping one.
