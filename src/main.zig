@@ -1701,13 +1701,8 @@ fn keypressShiftDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key
 
 fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
     warn("keypress change left\n");
-
-    // var return_geo: xcb_get_geometry_cookie_t = undefined;
-    // _ = _xcb_get_geometry(dpy, e.event, &return_geo);
-    // const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
-
     const win = windows.get(e.event);
-    const win_geo = win.geo;
+    const win_geo = win.?.value.geo;
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
@@ -1716,12 +1711,12 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         .y = win_geo.y + @intCast(i16, win_geo.height / 2) + @intCast(i16, g_border_width),
     };
 
-
     const largest_distance = blk: {
         var largest_dim: u16 = 0;
         for (screen.windows.toSlice()) |win_id| {
-            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+            const win_s = windows.get(win_id);
+            if (win_s == null) continue;
+            const geo = win_s.?.value.geo;
 
             if (geo.width > largest_dim) {
                 largest_dim = geo.width;
@@ -1755,8 +1750,9 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     var closest_win: xcb_window_t = 0;
     var closest_win_distance: u16 = std.math.maxInt(u16);
     for (screen.windows.toSlice()) |win_id| {
-        _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-        const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+        const win_s = windows.get(win_id);
+        if (win_s == null) continue;
+        const geo = win_s.?.value.geo;
 
         var closest_win_point = Point.{
             .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
@@ -1795,9 +1791,11 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         if (screen_midpoint < screen.geo.y or screen_midpoint > screen_bottom_y) continue;
 
         for (screen_item.windows.toSlice()) |win_id| {
-            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+            const win_s = windows.get(win_id);
+            if (win_s == null) continue;
+            const geo = win_s.?.value.geo;
             const x_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
+
             if (x_midpoint > win_center.x) continue;
 
             const closest_win_point = Point.{
@@ -1845,11 +1843,8 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
     warn("keypress change left\n");
 
-    var return_geo: xcb_get_geometry_cookie_t = undefined;
-    _ = _xcb_get_geometry(dpy, e.event, &return_geo);
-    const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
-
     const win = windows.get(e.event);
+    const win_geo = win.?.value.geo;
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
@@ -1863,8 +1858,9 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
         var largest_dim: u16 = 0;
 
         for (screen.windows.toSlice()) |win_id| {
-            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+            const win_s = windows.get(win_id);
+            if (win_s == null) continue;
+            const geo = win_s.?.value.geo;
 
             if (geo.width > largest_dim) {
                 largest_dim = geo.width;
@@ -1898,10 +1894,10 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
     // NOTE: left, up = 0 | right, down = maxInt(u32)
     var closest_win: xcb_window_t = std.math.maxInt(u32);
     var closest_win_distance: u16 = std.math.maxInt(u16);
-    // while (window_node != null) : (window_node = window_node.?.next) {
     for (screen.windows.toSlice()) |win_id| {
-        _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-        const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+        const win_s = windows.get(win_id);
+        if (win_s == null) continue;
+        const geo = win_s.?.value.geo;
 
         var closest_win_point = Point.{
             .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
@@ -1939,8 +1935,9 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
         if (screen_midpoint < screen.geo.y or screen_midpoint > screen_bottom_y) continue;
 
         for (screen_item.windows.toSlice()) |win_id| {
-            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+            const win_s = windows.get(win_id);
+            if (win_s == null) continue;
+            const geo = win_s.?.value.geo;
             const x_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
             if (x_midpoint < win_center.x) continue;
 
@@ -1988,11 +1985,8 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
 
 fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
-    var return_geo: xcb_get_geometry_cookie_t = undefined;
-    _ = _xcb_get_geometry(dpy, e.event, &return_geo);
-    const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
-
     const win = windows.get(e.event);
+    const win_geo = win.?.value.geo;
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
@@ -2006,8 +2000,9 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
         var largest_dim: u16 = 0;
 
         for (screen.windows.toSlice()) |win_id| {
-            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+            const win_s = windows.get(win_id);
+            if (win_s == null) continue;
+            const geo = win_s.?.value.geo;
 
             if (geo.width > largest_dim) {
                 largest_dim = geo.width;
@@ -2041,8 +2036,9 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
     var closest_win: xcb_window_t = 0;
     var closest_win_distance: u16 = std.math.maxInt(u16);
     for (screen.windows.toSlice()) |win_id| {
-        _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-        const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+        const win_s = windows.get(win_id);
+        if (win_s == null) continue;
+        const geo = win_s.?.value.geo;
 
         var closest_win_point = Point.{
             .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
@@ -2079,8 +2075,9 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
         const screen_midpoint = screen_item.geo.x + @intCast(i16, screen_item.geo.width / 2);
         if (screen_midpoint < screen.geo.x or screen_midpoint > screen_right_x) continue;
         for (screen_item.windows.toSlice()) |win_id| {
-            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+            const win_s = windows.get(win_id);
+            if (win_s == null) continue;
+            const geo = win_s.?.value.geo;
             const y_midpoint = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width);
 
             if (y_midpoint > win_center.y) continue;
@@ -2128,11 +2125,8 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
 
 
 fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
-    var return_geo: xcb_get_geometry_cookie_t = undefined;
-    _ = _xcb_get_geometry(dpy, e.event, &return_geo);
-    const win_geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
-
     const win = windows.get(e.event);
+    const win_geo = win.?.value.geo;
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
@@ -2145,8 +2139,10 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     const largest_distance = blk: {
         var largest_dim: u16 = 0;
         for (screen.windows.toSlice()) |win_id| {
-            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+            const win_s = windows.get(win_id);
+            if (win_s == null) continue;
+            const geo = win_s.?.value.geo;
+
 
             if (geo.width > largest_dim) {
                 largest_dim = geo.width;
@@ -2182,8 +2178,9 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     var closest_win_distance: u16 = std.math.maxInt(u16);
 
     for (screen.windows.toSlice()) |win_id| {
-        _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-        const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+        const win_s = windows.get(win_id);
+        if (win_s == null) continue;
+        const geo = win_s.?.value.geo;
 
         var closest_win_point = Point.{
             .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
@@ -2221,8 +2218,10 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         const screen_midpoint = screen_item.geo.x + @intCast(i16, screen_item.geo.width / 2);
         if (screen_midpoint < screen.geo.x or screen_midpoint > screen_right_x) continue;
         for (screen_item.windows.toSlice()) |win_id| {
-            _ = _xcb_get_geometry(dpy, win_id, &return_geo);
-            const geo = @ptrCast(*struct_xcb_get_geometry_reply_t, &xcb_get_geometry_reply(dpy, return_geo, null).?[0]);
+            const win_s = windows.get(win_id);
+            if (win_s == null) continue;
+            const geo = win_s.?.value.geo;
+
             const y_midpoint = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width);
 
             if (y_midpoint < win_center.y) continue;
