@@ -714,6 +714,8 @@ warn("{}\n", e);
             XCB_ENTER_NOTIFY => {
                 warn("xcb: enter notify\n");
                 var e = @ptrCast(*xcb_enter_notify_event_t, &ev);
+                if (e.detail != _XCB_NOTIFY_DETAIL_ANCESTOR
+                    and e.detail != _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) continue;
                 warn("{}\n", e);
 
                 if (windows.get(e.event)) |win| {
@@ -2298,11 +2300,9 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
         if (item.groups.len == 1) continue;
 
         if (item.removeGroup(selected_group.index)) {
-            // Remove and unmap group's windows from screen
-            // var window_node = selected_group.windows.last;
-            // while (window_node != null) : (window_node = window_node.?.prev) {
-            // TODO: reverse ???
-            for (selected_group.windows.toSlice()) |win_id| {
+            const window_ids = selected_group.windows.toSlice();
+            for (window_ids) |_, j| {
+                const win_id = window_ids[window_ids.len - 1 - j];
                 if (item.removeWindow(win_id)) {
                     _ = _xcb_unmap_window(dpy, win_id, &return_cookie);
                 }
@@ -2314,16 +2314,17 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
     // Add and map window to screen
     if (selected_group_index != group_index) {
+        const window_ids = selected_group.windows.toSlice();
         mouse_screen.addGroup(selected_group.index);
-        // TODO: reverse ???
-        for (selected_group.windows.toSlice()) |win_id| {
-            var win = windows.get(win_id);
+        mouse_screen.windows.insertSlice(0, window_ids) catch {
+            warn("keypressToggleGroup: Failed to enter ids into Screen windows");
+            return;
+        };
+        for (window_ids) |_, i| {
+            var win = windows.get(window_ids[window_ids.len - 1 - i]);
             if (win == null) continue;
-            _ = mouse_screen.addWindow(win.?.value.id);
 
             if (win.?.value.screen_index != mouse_screen.index) {
-                // TODO: instead get this from where screen_node variable is used
-                // in a loop ???
                 var old_screen = getScreen(win.?.value.screen_index, screens);
                 win.?.value.geo = old_screen.recalculateWindowGeometry(win.?.value.geo, mouse_screen);
                 win.?.value.screen_index = mouse_screen.index;
