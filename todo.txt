@@ -8,7 +8,7 @@ function.
 
 Screen:
 [*] Convert screens variable from LinkedList to ArrayList
-[ ] A screen is added/remove.
+[ ] Can added/remove a screen.
 [?] Create 'root' window for every screen. Will help with screen switching using enter event.
 
 

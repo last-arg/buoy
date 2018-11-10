@@ -4,6 +4,7 @@ const warn = std.debug.warn;
 const panic = std.debug.panic;
 const assert = std.debug.assert;
 const mem = std.mem;
+const meta = std.meta;
 const Allocator = mem.Allocator;
 const os = std.os;
 const child = os.ChildProcess;
@@ -191,9 +192,9 @@ var g_window_min_width: u16= 100; // NOTE: without border
 var g_window_min_height: u16 = 100; // NOTE: without border
 var g_window_move_x: u16 = 50;
 var g_window_move_y: u16 = 40;
-var g_grid_rows: u8 = 4;
-var g_grid_cols: u8 = 4;
-var g_grid_total: u16 = undefined;
+const g_grid_rows: u8 = 4;
+const g_grid_cols: u8 = 4;
+var g_grid_total = g_grid_rows * g_grid_cols;
 var g_grid_color: u32 = undefined;
 var g_grid_show: bool = true;
 var g_screen_root: xcb_window_t = undefined;
@@ -284,13 +285,23 @@ var root_keymap = []Key.{
     Key.create(c"5", g_mod, Action.{.ToggleGroup = {}}),
 };
 
+
+
+// NOTE: xcb_configure_window mask/values order
+// X, Y, WIDTH, HEIGHT, BORDER_WIDTH, SIBLING, STACK_MODE
+// TODO: make different functions for position, dimesion, border width ???
+const WindowChange = struct.{
+    id: xcb_window_t,
+    mask: u16,
+    values: ArrayList(i32),
+};
+
 pub fn main() !void {
     var dpy = xcb_connect(null, null);
     if (xcb_connection_has_error(dpy) > 0) return error.FailedToOpenDisplay;
 
     // ------- CONFIG -------
     var group_count: u8 = 10;
-    g_grid_total = g_grid_rows * g_grid_cols;
 
     // Set keyboard mappings
     var keymap = []Key.{
@@ -493,14 +504,29 @@ pub fn main() !void {
             };
             var group_index = active_screen.groups.at(0);
             var group = &groups.toSlice()[group_index];
+            var return_void_pointer: xcb_void_cookie_t = undefined;
+            var geo = blk: {
+                var return_geo: xcb_get_geometry_cookie_t = undefined;
+                _ = _xcb_get_geometry(dpy, win, &return_geo);
+                var geo = xcb_get_geometry_reply(dpy, return_geo, null);
+
+                if (geo == null) continue;
+
+                break :blk Geometry.{
+                    .x = geo.?[0].x,
+                    .y = geo.?[0].y,
+                    .width = geo.?[0].width,
+                    .height = geo.?[0].height,
+                };
+            };
 
             _ = _xcb_change_window_attributes(dpy, win, event_mask, @ptrCast(?*const c_void, &values), &return_cookie);
 
             configureWindow(dpy, win);
             resizeAndMoveWindow(dpy, win, active_screen);
             setWindowEvents(dpy, win, keymap[0..]);
-            _ = addWindow(dpy, allocator, win, active_screen, group, &windows);
-
+            _ = addWindow(allocator, win, geo, active_screen, group, &windows);
+            _ = _xcb_map_window(dpy, win, &return_void_pointer);
         }
 
         const mouse_screen = getActiveMouseScreen(dpy, screens);
@@ -509,9 +535,15 @@ pub fn main() !void {
         }
     }
 
-    _ = xcb_flush(dpy);
+    var window_changes = ArrayList(WindowChange).init(allocator);
+    defer window_changes.deinit();
+    var map_windows = ArrayList(xcb_window_t).init(allocator);
+    defer map_windows.deinit();
 
     while (true) {
+        window_changes.shrink(0);
+        map_windows.shrink(0);
+
         var ev = xcb_wait_for_event(dpy).?[0];
         var res_type = ev.response_type & ~u8(0x80);
         switch (res_type) {
@@ -597,10 +629,13 @@ pub fn main() !void {
 
                 if (i == 0) continue;
 
-                var return_pointer: xcb_void_cookie_t = undefined;
-                _ = _xcb_configure_window(dpy, e.window, config_mask, @ptrCast(?*const c_void, &config_values), &return_pointer);
-
-                _ = xcb_flush(dpy);
+                var change = WindowChange.{
+                    .id = e.window,
+                    .mask = config_mask,
+                    .values = ArrayList(i32).init(allocator),
+                };
+                try change.values.appendSlice(config_values[0..i]);
+                try window_changes.append(change);
             },
             XCB_CONFIGURE_NOTIFY => {
                 warn("xcb: configure notify\n");
@@ -613,38 +648,57 @@ pub fn main() !void {
                 var e = @ptrCast(*xcb_map_request_event_t, &ev);
 warn("{}\n", e);
                 var return_void_pointer: xcb_void_cookie_t = undefined;
+                var return_geo: xcb_get_geometry_cookie_t = undefined;
+                _ = _xcb_get_geometry(dpy, e.window, &return_geo);
+                var geo = xcb_get_geometry_reply(dpy, return_geo, null);
 
+                if (geo == null) continue;
+
+                const win_geo = Geometry.{
+                    .x = geo.?[0].x,
+                    .y = geo.?[0].y,
+                    .width = geo.?[0].width,
+                    .height = geo.?[0].height,
+                };
                 var active_screen = getActiveMouseScreen(dpy, screens);
-                var group_index = active_screen.groups.at(0);
+                // TODO: make it possible to spawn windows in different locations
+                const new_geo = newGeometryInsideScreen(win_geo, active_screen.*);
+
+                const group_index = active_screen.groups.at(0);
                 var group = &groups.toSlice()[group_index];
-
-
-                setWindowEvents(dpy, e.window, keymap[0..]);
-
-                // TODO: set window location and dimensions
-                resizeAndMoveWindow(dpy, e.window, active_screen);
-
+                const win = try addWindow(allocator, e.window, new_geo, active_screen, group, &windows);
                 var attr_mask: u16 = _XCB_CW_EVENT_MASK;
                 var attr_values = []u32.{_XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY};
                 _ = _xcb_change_window_attributes(dpy, e.window, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 
+                setWindowEvents(dpy, e.window, keymap[0..]);
 
-                if (!windows.contains(e.window)) {
+                var win_changes = WindowChange.{
+                    .id = win.id,
+                    .mask = 0,
+                    .values = ArrayList(i32).init(allocator),
+                };
 
-                    _ = addWindow(dpy, allocator, e.window, active_screen, group, &windows);
-                }
+                win_changes.mask |= @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_X))
+                                  | @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_Y))
+                                  | @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_WIDTH))
+                                  | @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_HEIGHT))
+                                  | @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_BORDER_WIDTH));
 
-                _ = _xcb_map_window(dpy, e.window, &return_void_pointer);
+                try win_changes.values.appendSlice([]i32.{
+                    new_geo.x,
+                    new_geo.y,
+                    new_geo.width,
+                    new_geo.height,
+                    g_border_width,
+                });
+
+                try window_changes.append(win_changes);
+                try map_windows.append(e.window);
 
                 var focused_window = getFocusedWindow(dpy);
                 unfocusWindow(dpy, focused_window, g_default_border_color);
                 focusWindow(dpy, e.window, g_active_border_color);
-
-                var config_mask = @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_BORDER_WIDTH));
-                var config_values = []i32.{g_border_width};
-                _ = _xcb_configure_window(dpy, e.window, config_mask, @ptrCast(?*const c_void, &config_values), &return_void_pointer);
-
-                _ = xcb_flush(dpy);
             },
             XCB_UNMAP_NOTIFY => {
                 warn("xcb: unmap notify\n");
@@ -705,7 +759,7 @@ warn("{}\n", e);
             },
             XCB_KEY_PRESS => {
                 warn("xcb: key press before function call\n");
-                keypressEvent(allocator, dpy, ev, screens, groups, windows, keymap[0..]);
+                keypressEvent(allocator, dpy, ev, screens, groups, windows, keymap[0..], &window_changes, map_windows);
             },
             XCB_KEY_RELEASE => {
                 warn("xcb: key release\n");
@@ -750,9 +804,21 @@ warn("{}\n", e);
                 _ = xcb_flush(dpy);
             }
         }
+        // warn("changes len: {}\n", window_changes.len);
+        var return_pointer: xcb_void_cookie_t = undefined;
+        // Configure windows
+        for (window_changes.toSlice()) |change| {
+            warn("change window =====\n");
+            _ = _xcb_configure_window(dpy, change.id, change.mask, @ptrCast(?*const c_void, change.values.toSlice().ptr), &return_pointer);
+        }
 
+        // Map windows
+        for (map_windows.toSlice()) |id| {
+            warn("map window =====\n");
+            _ = _xcb_map_window(dpy, id, &return_pointer);
+        }
 
-
+        _ = xcb_flush(dpy);
     }
 }
 
@@ -884,6 +950,8 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
     };
 }
 
+
+
 fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) Geometry {
     var screen_width:i32 = screen.geo.width;
     var screen_height:i32 = screen.geo.height;
@@ -990,42 +1058,19 @@ fn debugScreenWindows(ll: ArrayList(Screen)) void {
 }
 
 
-fn addWindow(dpy: ?*xcb_connection_t, allocator: *Allocator, win: xcb_window_t, screen: *Screen, group: *Group, windows: *WindowsHashMap) void {
-    var return_geo: xcb_get_geometry_cookie_t = undefined;
-    _ = _xcb_get_geometry(dpy, win, &return_geo);
-    var geo = xcb_get_geometry_reply(dpy, return_geo, null);
-
-    if (geo == null) {
-        warn("addWindow: Failed to get window's geometry information.\n");
-        return;
-    }
-
-    const win_geo = Geometry.{
-        .x = geo.?[0].x,
-        .y = geo.?[0].y,
-        .width = geo.?[0].width,
-        .height = geo.?[0].height,
-    };
-
-    warn("new window geo: {}\n", win_geo);
-
+fn addWindow(allocator: *Allocator, win: xcb_window_t, geo: Geometry, screen: *Screen, group: *Group, windows: *WindowsHashMap) !Window {
     var new_window = Window.{
         .id = win,
         .screen_index = screen.index,
         .group_index = group.index,
-        .geo = win_geo,
+        .geo = geo,
     };
 
-    // Add to windows hash map
-    // TODO: fn putOrGet ???
-    _ = windows.put(win, new_window) catch {
-        warn("addWindow: Failed to add window to windows hashmap.\n");
-        return;
-    };
-    // var kv = windows.get(win);
-
+    var result = try windows.put(win, new_window);
     _ = screen.addWindow(win);
     group.addWindow(win, allocator);
+
+    return new_window;
 }
 
 
@@ -1232,7 +1277,7 @@ fn drawAllScreenGrids(dpy: ?*xcb_connection_t, allocator: *Allocator, screens: A
 }
 
 
-fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap, keymap: []Key) void {
+fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap, keymap: []Key, window_changes: *ArrayList(WindowChange), map_windows: ArrayList(xcb_window_t)) void {
     warn("xcb: key press\n");
     const e = @intToPtr(*xcb_key_press_event_t, @ptrToInt(&ev));
     // warn("{}\n", e);
@@ -1265,11 +1310,15 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
             switch (key.action) {
                 Action.Move => |direction| {
                     warn("dir: {}\n", direction);
-                    switch (direction) {
-                        Direction.Left => keypressMoveLeft(allocator, dpy, e, screens, groups, windows),
-                        Direction.Right => keypressMoveRight(allocator, dpy, e, screens, groups, windows),
-                        Direction.Up => keypressMoveUp(allocator, dpy, e, screens, groups, windows),
-                        Direction.Down => keypressMoveDown(allocator, dpy, e, screens, groups, windows),
+                    if (windows.get(e.event)) |win| {
+                        const change = keypressMove(allocator, direction, &win.value, screens, groups) catch {
+                            warn("keypressEvent: Failed to get move changes.\n");
+                            return;
+                        };
+                        window_changes.append(change) catch {
+                            warn("keypressEvent: Failed to add move changes.\n");
+                            return;
+                        };
                     }
                 },
                 Action.Shift => |direction| {
@@ -1304,104 +1353,54 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
 }
 
 
-fn keypressMoveLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
-    warn("move left func\n");
+fn keypressMove(allocator: *Allocator, direction: Direction, win: *Window, screens: ArrayList(Screen), groups: ArrayList(Group)) !WindowChange {
+    // TODO: Do I need a separate value for win.geo here ???
+    var win_geo = win.geo;
+    var screen = getScreen(win.screen_index, screens);
+    var mask: u16 = 0;
+    var value: i32 = 0;
 
-    var win = windows.get(e.event);
-    if (win == null) return;
-    const win_geo = win.?.value.geo;
+    switch (direction) {
+        Direction.Left => {
+            win_geo.x = win_geo.x - @intCast(i16, g_window_move_x);
+            mask = @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_X));
+            value = win_geo.x;
+        },
+        Direction.Right => {
+            win_geo.x = win_geo.x + @intCast(i16, g_window_move_x);
+            mask = @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_X));
+            value = win_geo.x;
+        },
+        Direction.Up => {
+            win_geo.y = win_geo.y - @intCast(i16, g_window_move_y);
+            mask = @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_Y));
+            value = win_geo.y;
+        },
+        Direction.Down => {
+            win_geo.y = win_geo.y + @intCast(i16, g_window_move_y);
+            mask = @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_Y));
+            value = win_geo.y;
+        },
+    }
 
-    var screen = getScreen(win.?.value.screen_index, screens);
-    var new_x = win_geo.x - @intCast(i16, g_window_move_x);
-    win.?.value.geo.x = new_x;
+    win.geo = win_geo;
 
-    var new_edge_x = new_x + @intCast(i16, win_geo.width + 2 * g_border_width);
-    if (new_edge_x > screen.geo.x) {
-        moveWindow(dpy, e.event, new_x, win_geo.y);
-    } else {
-        const new_screen = getScreenOnLocation(@intCast(i16, new_edge_x), @intCast(i16, win_geo.y), screens);
+    if (!isLocationInScreen(win_geo.x, win_geo.y, screen.*)) {
+        const new_screen = getScreenOnLocation(@intCast(i16, win_geo.x), @intCast(i16, win_geo.y), screens);
 
         if (new_screen != null and screen.index != new_screen.?.index) {
-            moveWindow(dpy, e.event, new_x, win_geo.y);
-            win.?.value = screen.windowToScreen(&win.?.value, new_screen.?, groups.toSlice());
+            _ = screen.windowToScreen(win, new_screen.?, groups.toSlice());
         }
     }
-}
 
+    var change = WindowChange.{
+        .id = win.id,
+        .mask = mask,
+        .values = ArrayList(i32).init(allocator),
+    };
+    try change.values.append(value);
 
-fn keypressMoveRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
-    warn("move right func\n");
-
-    var win = windows.get(e.event);
-    if (win == null) return;
-    const win_geo = win.?.value.geo;
-
-    var screen = getScreen(win.?.value.screen_index, screens);
-
-    var new_x = win_geo.x + @intCast(i16, g_window_move_x);
-    win.?.value.geo.x = new_x;
-
-    if (new_x < screen.geo.x + @intCast(i16, screen.geo.width)) {
-        moveWindow(dpy, e.event, new_x, win_geo.y);
-    } else {
-        const new_screen = getScreenOnLocation(@intCast(i16, new_x), @intCast(i16, win_geo.y), screens);
-
-        if (new_screen != null and screen.index != new_screen.?.index) {
-            moveWindow(dpy, e.event, new_x, win_geo.y);
-            win.?.value = screen.windowToScreen(&win.?.value, new_screen.?, groups.toSlice());
-        }
-    }
-}
-
-
-fn keypressMoveUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
-    warn("move up func\n");
-
-    var win = windows.get(e.event);
-    if (win == null) return;
-    const win_geo = win.?.value.geo;
-
-    var screen = getScreen(win.?.value.screen_index, screens);
-
-    var new_y = win_geo.y - @intCast(i16, g_window_move_y);
-    win.?.value.geo.y = new_y;
-
-    var new_edge_y = new_y + @intCast(i16, win_geo.height) + @intCast(i16, 2 * g_border_width);
-    if (new_edge_y > screen.geo.y) {
-        moveWindow(dpy, e.event, win_geo.x, new_y);
-    } else {
-        const new_screen = getScreenOnLocation(@intCast(i16, win_geo.x), @intCast(i16, new_edge_y), screens);
-
-        if (new_screen != null and screen.index != new_screen.?.index) {
-            moveWindow(dpy, e.event, win_geo.x, new_y);
-            win.?.value = screen.windowToScreen(&win.?.value, new_screen.?, groups.toSlice());
-        }
-    }
-}
-
-
-fn keypressMoveDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
-    warn("move Down func\n");
-
-    var win = windows.get(e.event);
-    if (win == null) return;
-    const win_geo = win.?.value.geo;
-
-    var screen = getScreen(win.?.value.screen_index, screens);
-
-    var new_y = win_geo.y + @intCast(i16, g_window_move_y);
-    win.?.value.geo.y = new_y;
-
-    if (new_y < screen.geo.y + @intCast(i16, screen.geo.height)) {
-        moveWindow(dpy, e.event, win_geo.x, new_y);
-    } else {
-        const new_screen = getScreenOnLocation(@intCast(i16, win_geo.x), @intCast(i16, new_y), screens);
-
-        if (new_screen != null and screen.index != new_screen.?.index) {
-            moveWindow(dpy, e.event, win_geo.x, new_y);
-            win.?.value = screen.windowToScreen(&win.?.value, new_screen.?, groups.toSlice());
-        }
-    }
+    return change;
 }
 
 
@@ -2621,4 +2620,55 @@ fn isLocationInScreen(x: i16, y: i16, screen: Screen) bool {
 
     return (x >= screen.geo.x)  and (x <= screen_x_right) 
             and (y >= screen.geo.y) and (y <= screen_y_bottom);
+}
+
+
+fn newGeometryInsideScreen(geo: Geometry, screen: Screen) Geometry {
+    var screen_width:i32 = screen.geo.width - 2 * g_screen_padding;
+    var screen_height:i32 = screen.geo.height - 2 * g_screen_padding;
+    var x:i32 = geo.x - screen.geo.x;
+    var y:i32 = geo.y - screen.geo.y;
+    var width:i32 = geo.width;
+    var height:i32 = geo.height;        
+    const bw = @intCast(i32, g_border_width);
+    const sp = @intCast(i32, g_screen_padding);
+
+    // Width and x coordinate
+    var win_total_width = width + 2 * bw;
+
+    if (win_total_width >= screen_width) {
+        width = screen_width - 2 * bw;
+    }
+
+    win_total_width = width + 2 * bw;
+
+    if ((x + win_total_width) >= screen_width) {
+        // x = x - (x + win_total_width - screen_width) - sp;
+        x = screen.geo.x + screen_width - sp - win_total_width;
+    }
+
+    x = std.math.max(sp, x) + screen.geo.x;
+
+
+    // Height and y coordinate
+    var win_total_height = height + 2 * bw;
+
+    if (win_total_height >= screen_height) {
+        height = screen_height - 2 * bw;
+    }
+
+    win_total_height = height + 2 * bw;
+
+    if ((y + win_total_height) >= screen_height) {
+        y = y - (y + win_total_height - screen_height) - sp;
+    }
+
+    y = std.math.max(sp, y) + screen.geo.y;
+
+    return Geometry.{
+        .x = @intCast(i16, x),
+        .y = @intCast(i16, y),
+        .width = @intCast(u16, width),
+        .height = @intCast(u16, height),
+    };
 }
