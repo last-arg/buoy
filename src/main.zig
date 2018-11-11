@@ -509,7 +509,9 @@ pub fn main() !void {
                 .window = win_id,
             };
 
-           _ = _xcb_send_event(dpy, @boolToInt(true), g_screen_root,@intCast(u32, @enumToInt(XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT)), @ptrCast([*]const u8, &fake_event), &return_pointer);
+            // TODO: Maybe it is better to fill WindowAttributes, WindowChanges, ...
+            // here. Then each window won't be check on every event loop. ???
+            _ = _xcb_send_event(dpy, @boolToInt(true), g_screen_root,@intCast(u32, @enumToInt(XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT)), @ptrCast([*]const u8, &fake_event), &return_pointer);
         }
         _ = xcb_flush(dpy);
     }
@@ -560,7 +562,7 @@ pub fn main() !void {
                             _ = screen.removeGroup(new_window_info.?.value.group_index);
                             screen.addGroup(new_window_info.?.value.group_index);
                         }
-                        focusWindow(dpy, new_window, g_active_border_color);
+                        // focusWindow(dpy, new_window, g_active_border_color);
                     }
                 }
             },
@@ -594,7 +596,7 @@ warn("{}\n", e);
 
                 // TODO: If I want to treat windows differently that were
                 // open before loop started.
-                var event_send = ev.response_type & u8(0x80) == 128;
+                // var event_send = ev.response_type & u8(0x80) == 128;
 
                 var return_void_pointer: xcb_void_cookie_t = undefined;
                 var return_geo: xcb_get_geometry_cookie_t = undefined;
@@ -645,12 +647,12 @@ warn("{}\n", e);
                 try window_changes.append(win_changes);
                 try map_windows.append(e.window);
 
-                var focused_window = getFocusedWindow(dpy);
-                if (focused_window != win.id) {
-                    unfocusWindow(dpy, focused_window, g_default_border_color);
-                    // TODO: @error BadMatch
-                    focusWindow(dpy, win.id, g_active_border_color);
-                }
+                // var focused_window = getFocusedWindow(dpy);
+                // if (focused_window != win.id) {
+                //     unfocusWindow(dpy, focused_window, g_default_border_color);
+                //     // TODO: @error BadMatch
+                //     focusWindow(dpy, win.id, g_active_border_color);
+                // }
             },
             XCB_UNMAP_NOTIFY => {
                 warn("xcb: unmap notify\n");
@@ -757,6 +759,60 @@ warn("{}\n", e);
             }
         }
 
+        // Focus window
+        // TODO: Won't fire if window is destroyed.
+        const current_focus = getFocusedWindow(dpy);
+        warn("current focus: {}\n", current_focus);
+        if (map_windows.len > 0) {
+            // const current_focus = getFocusedWindow(dpy);
+            const new_focus = map_windows.at(map_windows.len - 1);
+            if (current_focus != new_focus) {
+                warn("focus change\n");
+                const attr_mask = _XCB_CW_BORDER_PIXEL;
+                _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
+                // set default border color if current window if not root
+                if (current_focus != g_screen_root) {
+                    var attr = WindowAttributes.{
+                        .id = current_focus,
+                        .mask = attr_mask,
+                        .values = ArrayList(u32).init(allocator),
+                    };
+                    attr.values.append(g_default_border_color) catch {
+                        warn("main loop (change window focus): Failed to add value to attributes values field.\n");
+                    };
+                    window_attributes.append(attr) catch {
+                        warn("main lopp (): Failed to add attribute.\n");
+                    };
+                }
+
+                // set focused window color
+                var attr = WindowAttributes.{
+                    .id = new_focus,
+                    .mask = attr_mask,
+                    .values = ArrayList(u32).init(allocator),
+                };
+                attr.values.append(g_active_border_color) catch {
+                    warn("main loop (change window focus): Failed to add value to attributes values field.\n");
+                };
+                window_attributes.append(attr) catch {
+                    warn("main lopp (): Failed to add attribute.\n");
+                };
+
+                // set window focus
+                var change = WindowChange.{
+                    .id = new_focus,
+                    .mask = _XCB_CONFIG_WINDOW_STACK_MODE,
+                    .values = ArrayList(i32).init(allocator),
+                };
+                change.values.append(_XCB_STACK_MODE_ABOVE) catch {
+                    warn("main loop (change window focus): Failed to add value to change values field.\n");
+                };
+                window_changes.append(change) catch {
+                    warn("main lopp (): Failed to add window change.\n");
+                };
+            }
+        }
+
         // Set window attributes
         for (window_attributes.toSlice()) |attr| {
             warn("set window attributes =====\n");
@@ -780,6 +836,7 @@ warn("{}\n", e);
             warn("map window =====\n");
             _ = _xcb_map_window(dpy, id, &return_pointer);
         }
+
 
         _ = xcb_flush(dpy);
 
