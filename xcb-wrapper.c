@@ -178,3 +178,10 @@ xcb_void_cookie_t *_xcb_clear_area(xcb_connection_t *conn, uint8_t exposures, xc
   *return_pointer = result;
   return return_pointer;
 }
+
+xcb_void_cookie_t *_xcb_send_event(xcb_connection_t *conn, uint8_t propagate, xcb_window_t destination, uint32_t event_mask, const char *event, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_send_event(conn, propagate, destination, event_mask, event);
+  *return_pointer = result;
+  return return_pointer;
+}
+

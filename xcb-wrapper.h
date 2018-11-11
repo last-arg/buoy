@@ -61,3 +61,5 @@ xcb_void_cookie_t *_xcb_free_gc(xcb_connection_t *conn, xcb_gcontext_t gc, xcb_v
 
 xcb_void_cookie_t *_xcb_clear_area(xcb_connection_t *conn, uint8_t exposures, xcb_window_t window, int16_t x, int16_t y, uint16_t width, uint16_t height, xcb_void_cookie_t *return_pointer);
 
+xcb_void_cookie_t *_xcb_send_event(xcb_connection_t *conn, uint8_t propagate, xcb_window_t destination, uint32_t event_mask, const char *event, xcb_void_cookie_t *return_pointer);
+	

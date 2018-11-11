@@ -64,3 +64,5 @@ pub extern fn _xcb_free_gc(c: ?*xcb_connection_t, gc: xcb_gcontext_t, return_poi
 
 pub extern fn _xcb_clear_area(c: ?*xcb_connection_t, exposures: u8, window: xcb_window_t, x: i16, y: i16, width: u16, height: u16, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
+pub extern fn _xcb_send_event(c: ?*xcb_connection_t, propagate: u8, destination: xcb_window_t, event_mask: u32, event: ?[*]const u8, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+
