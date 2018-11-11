@@ -310,6 +310,45 @@ const PackedEvent = struct.{
     window: xcb_window_t,
 };
 
+
+fn EventResultsFn() type {
+    return struct.{
+        const Self = @This();
+        w_attrs: ArrayList(WindowAttributes),
+        w_changes: ArrayList(WindowChange),
+        w_map: ArrayList(xcb_window_t),
+        w_unmap: ArrayList(xcb_window_t),
+        // TODO: don't know if needed. Will be good when adding values to
+        // changes or attributes.
+        allocator: *Allocator,
+
+        pub fn init(allocator: *Allocator) Self {
+            return Self.{
+                .allocator = allocator,
+                .w_attrs = ArrayList(WindowAttributes).init(allocator),
+                .w_changes = ArrayList(WindowChange).init(allocator),
+                .w_map = ArrayList(xcb_window_t).init(allocator),
+                .w_unmap = ArrayList(xcb_window_t).init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.w_attrs.deinit();
+            self.w_changes.deinit();
+            self.w_map.deinit();
+            self.w_unmap.deinit();
+        }
+
+        pub fn reset(self: *Self) void {
+            self.w_attrs.shrink(0);
+            self.w_changes.shrink(0);
+            self.w_map.shrink(0);
+            self.w_unmap.shrink(0);
+        }
+    };
+}
+const EventResults = EventResultsFn();
+
 pub fn main() !void {
     var return_pointer: xcb_void_cookie_t = undefined;
     var dpy = xcb_connect(null, null);
@@ -344,8 +383,6 @@ pub fn main() !void {
 
     // TODO: Change/Add different allocator(s)
     const allocator = std.heap.c_allocator;
-
-    // const root_gc_id = xcb_generate_id(dpy);
 
     var return_screen: xcb_screen_iterator_t = undefined;
     _ = _xcb_setup_roots_iterator(xcb_get_setup(dpy), &return_screen);
@@ -527,6 +564,9 @@ pub fn main() !void {
     var window_attributes = ArrayList(WindowAttributes).init(allocator);
     defer window_attributes.deinit();
 
+    var event_results = EventResults.init(allocator);
+    defer event_results.deinit();
+
     while (true) {
         var event = xcb_wait_for_event(dpy);
         var ev = event.?[0];
@@ -576,7 +616,7 @@ pub fn main() !void {
                     continue;
                 };
 
-                window_changes.append(change) catch {
+                event_results.w_changes.append(change) catch {
                     warn("configure request: Failed to add window to changes array list\n.");
                     continue;
                 };
@@ -644,15 +684,8 @@ warn("{}\n", e);
                     g_border_width,
                 });
 
-                try window_changes.append(win_changes);
-                try map_windows.append(e.window);
-
-                // var focused_window = getFocusedWindow(dpy);
-                // if (focused_window != win.id) {
-                //     unfocusWindow(dpy, focused_window, g_default_border_color);
-                //     // TODO: @error BadMatch
-                //     focusWindow(dpy, win.id, g_active_border_color);
-                // }
+                try event_results.w_changes.append(win_changes);
+                try event_results.w_map.append(e.window);
             },
             XCB_UNMAP_NOTIFY => {
                 warn("xcb: unmap notify\n");
@@ -761,15 +794,15 @@ warn("{}\n", e);
 
         // Focus window
         // TODO: Won't fire if window is destroyed.
+        // TODO: xcb_set_input_focus doesn't change focus.
         const current_focus = getFocusedWindow(dpy);
         warn("current focus: {}\n", current_focus);
-        if (map_windows.len > 0) {
-            // const current_focus = getFocusedWindow(dpy);
-            const new_focus = map_windows.at(map_windows.len - 1);
+        if (event_results.w_map.len > 0) {
+            const new_focus = event_results.w_map.at(event_results.w_map.len - 1);
             if (current_focus != new_focus) {
                 warn("focus change\n");
+                warn("new focus: {}\n", new_focus);
                 const attr_mask = _XCB_CW_BORDER_PIXEL;
-                _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
                 // set default border color if current window if not root
                 if (current_focus != g_screen_root) {
                     var attr = WindowAttributes.{
@@ -780,7 +813,7 @@ warn("{}\n", e);
                     attr.values.append(g_default_border_color) catch {
                         warn("main loop (change window focus): Failed to add value to attributes values field.\n");
                     };
-                    window_attributes.append(attr) catch {
+                    event_results.w_attrs.append(attr) catch {
                         warn("main lopp (): Failed to add attribute.\n");
                     };
                 }
@@ -794,7 +827,7 @@ warn("{}\n", e);
                 attr.values.append(g_active_border_color) catch {
                     warn("main loop (change window focus): Failed to add value to attributes values field.\n");
                 };
-                window_attributes.append(attr) catch {
+                event_results.w_attrs.append(attr) catch {
                     warn("main lopp (): Failed to add attribute.\n");
                 };
 
@@ -807,36 +840,64 @@ warn("{}\n", e);
                 change.values.append(_XCB_STACK_MODE_ABOVE) catch {
                     warn("main loop (change window focus): Failed to add value to change values field.\n");
                 };
-                window_changes.append(change) catch {
+                event_results.w_changes.append(change) catch {
                     warn("main lopp (): Failed to add window change.\n");
                 };
+
+                // NOTE: window needs to be visible/mapped to focus it
+                _ = _xcb_map_window(dpy, new_focus, &return_pointer);
+                event_results.w_map.shrink(event_results.w_map.len - 1);
+                _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
             }
         }
 
         // Set window attributes
-        for (window_attributes.toSlice()) |attr| {
-            warn("set window attributes =====\n");
+        // for (window_attributes.toSlice()) |attr| {
+        //     warn("set window attributes =====\n");
+        //     _ = _xcb_change_window_attributes(dpy, attr.id, attr.mask, @ptrCast(?*const c_void, attr.values.toSlice().ptr), &return_pointer);
+        // }
+
+        // Set window attributes
+        for (event_results.w_attrs.toSlice()) |attr| {
+            warn("event_results: set window attributes =====\n");
             _ = _xcb_change_window_attributes(dpy, attr.id, attr.mask, @ptrCast(?*const c_void, attr.values.toSlice().ptr), &return_pointer);
         }
 
         // Configure windows
-        for (window_changes.toSlice()) |change| {
-            warn("change window =====\n");
+        // for (window_changes.toSlice()) |change| {
+        //     warn("change window =====\n");
+        //     _ = _xcb_configure_window(dpy, change.id, change.mask, @ptrCast(?*const c_void, change.values.toSlice().ptr), &return_pointer);
+        // }
+
+        // Configure windows
+        for (event_results.w_changes.toSlice()) |change| {
+            warn("event_results: change window =====\n");
             _ = _xcb_configure_window(dpy, change.id, change.mask, @ptrCast(?*const c_void, change.values.toSlice().ptr), &return_pointer);
         }
 
         // Unmap windows
-        for (unmap_windows.toSlice()) |id| {
-            warn("unmap window =====\n");
+        // for (unmap_windows.toSlice()) |id| {
+        //     warn("unmap window =====\n");
+        //     _ = _xcb_unmap_window(dpy, id, &return_pointer);
+        // }
+
+        // Unmap windows
+        for (event_results.w_unmap.toSlice()) |id| {
+            warn("event_results: unmap window =====\n");
             _ = _xcb_unmap_window(dpy, id, &return_pointer);
         }
 
         // Map windows
-        for (map_windows.toSlice()) |id| {
-            warn("map window =====\n");
+        // for (map_windows.toSlice()) |id| {
+        //     warn("map window =====\n");
+        //     _ = _xcb_map_window(dpy, id, &return_pointer);
+        // }
+
+        // Map windows
+        for (event_results.w_map.toSlice()) |id| {
+            warn("event_results: map window =====\n");
             _ = _xcb_map_window(dpy, id, &return_pointer);
         }
-
 
         _ = xcb_flush(dpy);
 
@@ -844,6 +905,8 @@ warn("{}\n", e);
         window_changes.shrink(0);
         map_windows.shrink(0);
         unmap_windows.shrink(0);
+
+        event_results.reset();
 
         // warn("END LOOP\n");
 
