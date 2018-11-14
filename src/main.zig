@@ -420,6 +420,7 @@ pub fn main() !void {
 
     const root_attr_mask = _XCB_CW_EVENT_MASK;
     _ = _xcb_change_window_attributes(dpy, screen_root, root_attr_mask, @ptrCast(?*const c_void, &value_list), &return_cookie);
+
     // _ = _xcb_free_cursor(dpy, cursor_id, &return_cookie);
 
 
@@ -561,14 +562,13 @@ pub fn main() !void {
             drawScreenGrid(dpy, screen_root, rects);
 
             _ = _xcb_map_window(dpy, win_id, &return_pointer);
-
-
         }
     }
 
-    _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, screens.at(0).root_id, _XCB_TIME_CURRENT_TIME, &return_cookie);
+    _ = _xcb_set_input_focus(dpy, @intCast(u8, @enumToInt(XCB_INPUT_FOCUS_NONE)), screens.at(0).root_id, _XCB_TIME_CURRENT_TIME, &return_cookie);
 
         _ = xcb_flush(dpy);
+        warn("current focus before loop: {}\n", getFocusedWindow(dpy));
     std.c.free(@ptrCast(*c_void, &monitors.?[0]));
     var event_results = EventResults.init(allocator);
     defer event_results.deinit();
@@ -611,8 +611,6 @@ pub fn main() !void {
     var window_attributes = ArrayList(WindowAttributes).init(allocator);
     defer window_attributes.deinit();
 
-
-
     while (true) {
         var event = xcb_wait_for_event(dpy);
         var ev = event.?[0];
@@ -649,6 +647,7 @@ pub fn main() !void {
                             screen.addGroup(new_window_info.?.value.group_index);
                         }
                     }
+                    continue;
                 }
             },
             XCB_CONFIGURE_REQUEST => {
@@ -741,6 +740,8 @@ warn("{}\n", e);
             },
             XCB_MAP_NOTIFY => {
                 warn("xcb: map notify\n");
+                var e = @ptrCast(*xcb_map_notify_event_t, &ev);
+                warn("{}\n", e);
             },
             XCB_EXPOSE => {
                 warn("xcb: expose\n");
@@ -765,11 +766,12 @@ warn("{}\n", e);
                 warn("xcb: key release\n");
             },
             XCB_ENTER_NOTIFY => {
-                // warn("xcb: enter notify\n");
+                warn("xcb: enter notify\n");
                 var e = @ptrCast(*xcb_enter_notify_event_t, &ev);
 
                 if (e.detail == @intCast(u8, @enumToInt(XCB_NOTIFY_DETAIL_INFERIOR))) continue;
                 warn("{}\n", e);
+
 
                 const screen_root_id: xcb_window_t = blk: {
                     for (screens.toSliceConst()) |s| {
@@ -785,7 +787,7 @@ warn("{}\n", e);
                 } else if (windows.get(e.event)) |win| {
                     warn("focus window\n");
                     const focused_window = getFocusedWindow(dpy);
-                    if (focused_window == win.value.id) continue;
+                    if (focused_window == win.value.id or focused_window == 0) continue;
                     var active_screen = getScreen(win.value.screen_index, screens);
 
                     event_results.focus.new = win.value.id;
@@ -818,13 +820,14 @@ warn("{}\n", e);
             }
         }
 
+
         // Focus window
-        // TODO: use getFocusWindow or save it in event_result.focus.current ???
         // TODO: try to simplify/refactor code
         const current_focus = getFocusedWindow(dpy);
+        warn("current focus: {}\n", current_focus);
         var new_focus = event_results.focus.new;
         if (current_focus != new_focus) {
-            warn("current focus: {}\n", current_focus);
+            // warn("current focus: {}\n", current_focus);
             warn("new focus: {}\n", new_focus);
             var current_screen = blk: {
                 for (screens.toSliceConst()) |screen| {
@@ -835,14 +838,30 @@ warn("{}\n", e);
                 break :blk null;
             };
 
-            if (current_screen == null or current_screen.?.windows.len > 0) {
-                warn("focus window\n");
+            if ((current_screen != null and current_screen.?.windows.len == 0) or current_focus == 0) {
+                warn("focus screen root\n");
+                if (current_focus != 0) {
+                    const attr_mask = _XCB_CW_BORDER_PIXEL;
+                    // set default border color if current window if not root
+                    var unfocus_attr = WindowAttributes {
+                        .id = current_focus,
+                        .mask = attr_mask,
+                        .values = ArrayList(u32).init(allocator),
+                    };
+                    try unfocus_attr.values.append(g_default_border_color);
+                    try event_results.w_attrs.append(unfocus_attr);
+                }
+
+                _ = _xcb_set_input_focus(dpy, @intCast(u8, @enumToInt(XCB_INPUT_FOCUS_NONE)), new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
+
+            } else if (current_screen == null or current_screen.?.windows.len > 0) {
                 if (current_screen) |screen| {
                     new_focus = screen.windows.at(0);
                     event_results.focus.new = new_focus;
                 }
 
                 if (current_focus != new_focus) {
+                    warn("focus window\n");
                     const attr_mask = _XCB_CW_BORDER_PIXEL;
                     // set default border color if current window if not root
                     var unfocus_attr = WindowAttributes {
@@ -873,35 +892,14 @@ warn("{}\n", e);
 
                     // NOTE: window needs to be visible/mapped to focus it
                     _ = _xcb_map_window(dpy, new_focus, &return_pointer);
-                    _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
+                    _ = _xcb_set_input_focus(dpy, @intCast(u8, @enumToInt(XCB_INPUT_FOCUS_NONE)), new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
                 }
-            } else if (current_screen.?.windows.len == 0) {
-                warn("focus screen root\n");
-                var is_current_focus_screen = blk: {
-                    for (screens.toSliceConst()) |screen| {
-                        if (screen.root_id == current_focus) {
-                            break :blk true;
-                        }
-                    }
-                    break :blk false;
-                };
-                const attr_mask = _XCB_CW_BORDER_PIXEL;
-                // set default border color if current window if not root
-                var unfocus_attr = WindowAttributes {
-                    .id = current_focus,
-                    .mask = attr_mask,
-                    .values = ArrayList(u32).init(allocator),
-                };
-                try unfocus_attr.values.append(g_default_border_color);
-                try event_results.w_attrs.append(unfocus_attr);
-                _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
-
-            }
+            } 
         }
 
+        const _focus = getFocusedWindow(dpy);
+warn("after focus: {}\n", _focus);
         // Set window attributes
-        // TODO: X11 error: BadWindow
-        // This happens with window that is already "on screen" before starting program
         for (event_results.w_attrs.toSlice()) |attr| {
             warn("event_results: set window attributes =====\n");
             _ = _xcb_change_window_attributes(dpy, attr.id, attr.mask, @ptrCast(?*const c_void, attr.values.toSlice().ptr), &return_pointer);
