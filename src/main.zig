@@ -1,3 +1,4 @@
+// TODO: check for loops. Where need add pointer symbol.
 const std = @import("std");
 const fmt = std.fmt;
 const warn = std.debug.warn;
@@ -11,7 +12,7 @@ const child = os.ChildProcess;
 const ArrayList = std.ArrayList;
 const hash_map = std.hash_map;
 const HashMap = std.HashMap;
-
+  
 const xlib = @cImport({
     @cInclude("X11/Xlib.h");
     // @cInclude("X11/keysym.h");
@@ -26,13 +27,15 @@ fn ScreenFn() type {
         const Self = @This();
         allocator: *Allocator,
         index: u8,
+        root_id: xcb_window_t,
         geo: Geometry,
         groups: ArrayList(u8),
         windows: ArrayList(xcb_window_t),
 
-        pub fn init(index: u8, geo: Geometry, allocator: *Allocator) !Self {
+        pub fn init(index: u8, root_id: xcb_window_t, geo: Geometry, allocator: *Allocator) !Self {
             var screen = Self.{
                 .index = index,
+                .root_id = root_id,
                 .allocator = allocator,
                 .geo = geo,
                 .groups = ArrayList(u8).init(allocator),
@@ -314,6 +317,13 @@ const PackedEvent = struct.{
 fn EventResultsFn() type {
     return struct.{
         const Self = @This();
+        const Focus = struct.{
+            current: xcb_window_t,
+            new: xcb_window_t,
+        };
+        // TODO: make variable that holds next/new/future focus id.
+        // Use getFocusedWindow or some other field for current focus id?
+        focus: Focus,
         w_attrs: ArrayList(WindowAttributes),
         w_changes: ArrayList(WindowChange),
         w_map: ArrayList(xcb_window_t),
@@ -324,6 +334,10 @@ fn EventResultsFn() type {
 
         pub fn init(allocator: *Allocator) Self {
             return Self.{
+                .focus = Focus.{
+                    .current = 0,
+                    .new = 0,
+                },
                 .allocator = allocator,
                 .w_attrs = ArrayList(WindowAttributes).init(allocator),
                 .w_changes = ArrayList(WindowChange).init(allocator),
@@ -344,6 +358,8 @@ fn EventResultsFn() type {
             self.w_changes.shrink(0);
             self.w_map.shrink(0);
             self.w_unmap.shrink(0);
+            // TODO: do it here or out of the struct?
+            self.focus.current = self.focus.new;
         }
     };
 }
@@ -399,7 +415,7 @@ pub fn main() !void {
         // | @enumToInt(XCB_EVENT_MASK_EXPOSURE)
         // | @enumToInt(XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY)
         // | @enumToInt(XCB_EVENT_MASK_STRUCTURE_NOTIFY)
-        | @enumToInt(XCB_EVENT_MASK_POINTER_MOTION),
+        // | @enumToInt(XCB_EVENT_MASK_POINTER_MOTION),
     };
 
     const root_attr_mask = _XCB_CW_EVENT_MASK;
@@ -495,10 +511,19 @@ pub fn main() !void {
     defer screens.deinit();
     // TODO: implement fallback (else branch)
     if (number_of_monitors > 0) {
+        const mask: u32 = @intCast(u32, @enumToInt(XCB_CW_BACKING_STORE)) 
+                        | @intCast(u32, @enumToInt(XCB_CW_OVERRIDE_REDIRECT))
+                        | @intCast(u32, @enumToInt(XCB_CW_EVENT_MASK))
+                        | @intCast(u32, @enumToInt(XCB_CW_DONT_PROPAGATE));
+
+        const values = []u32.{ @intCast(u32, @enumToInt(XCB_BACKING_STORE_ALWAYS))
+                             , 1
+                             , _XCB_EVENT_MASK_ENTER_WINDOW
+                             , 1};
+
         var j: u8 = 0;
         var return_monitors_iter: xcb_randr_monitor_info_iterator_t = undefined;
         _ = _xcb_randr_get_monitors_monitors_iterator(monitors, &return_monitors_iter);
-        // var is_set_has_mouse = false;
         while (return_monitors_iter.rem != 0) : ({
             _ = xcb_randr_monitor_info_next(@ptrCast(?[*]struct_xcb_randr_monitor_info_iterator_t ,&return_monitors_iter));
             j += 1;
@@ -512,7 +537,17 @@ pub fn main() !void {
                 .height = monitor.height,
             };
 
-            var screen = try Screen.init(j, geo, allocator);
+            // Create 'root' window
+            const win_id = xcb_generate_id(dpy);
+            _ = _xcb_create_window(dpy, 0, win_id, g_screen_root,
+                                   geo.x, geo.y, geo.width, geo.height,
+                                   0,
+                                   @intCast(u16, @enumToInt(XCB_WINDOW_CLASS_INPUT_OUTPUT)),
+                                   screen_data.root_visual,
+                                   mask, @ptrCast(*const c_void, &values),
+                                   &return_pointer);
+
+            var screen = try Screen.init(j, win_id, geo, allocator);
 
             screens.append(screen) catch {
                 warn("Failed to add screen.\n");
@@ -522,11 +557,17 @@ pub fn main() !void {
             var rects = try getGridRectangles(allocator, screen);
             _ = _xcb_clear_area(dpy, 1, screen_root, screen.geo.x, screen.geo.y, screen.geo.width, screen.geo.height, &return_cookie);
             drawScreenGrid(dpy, screen_root, rects);
+
+            _ = _xcb_map_window(dpy, win_id, &return_pointer);
         }
     }
 
-    std.c.free(@ptrCast(*c_void, &monitors.?[0]));
+    _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, screens.at(0).root_id, _XCB_TIME_CURRENT_TIME, &return_cookie);
 
+        _ = xcb_flush(dpy);
+    std.c.free(@ptrCast(*c_void, &monitors.?[0]));
+    var event_results = EventResults.init(allocator);
+    defer event_results.deinit();
     {
         var return_tree: xcb_query_tree_cookie_t = undefined;
         _ = _xcb_query_tree(dpy, screen_root, &return_tree);
@@ -548,7 +589,9 @@ pub fn main() !void {
 
             // TODO: Maybe it is better to fill WindowAttributes, WindowChanges, ...
             // here. Then each window won't be check on every event loop. ???
+            // Make map request switch option into function and use it here ???
             _ = _xcb_send_event(dpy, @boolToInt(true), g_screen_root,@intCast(u32, @enumToInt(XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT)), @ptrCast([*]const u8, &fake_event), &return_pointer);
+            event_results.focus.new = win_id;
         }
         _ = xcb_flush(dpy);
     }
@@ -564,8 +607,7 @@ pub fn main() !void {
     var window_attributes = ArrayList(WindowAttributes).init(allocator);
     defer window_attributes.deinit();
 
-    var event_results = EventResults.init(allocator);
-    defer event_results.deinit();
+
 
     while (true) {
         var event = xcb_wait_for_event(dpy);
@@ -602,7 +644,6 @@ pub fn main() !void {
                             _ = screen.removeGroup(new_window_info.?.value.group_index);
                             screen.addGroup(new_window_info.?.value.group_index);
                         }
-                        // focusWindow(dpy, new_window, g_active_border_color);
                     }
                 }
             },
@@ -636,7 +677,9 @@ warn("{}\n", e);
 
                 // TODO: If I want to treat windows differently that were
                 // open before loop started.
-                // var event_send = ev.response_type & u8(0x80) == 128;
+                var event_send = ev.response_type & u8(0x80) == 128;
+                warn("event_send: {}\n", event_send);
+                if (event_send) continue;
 
                 var return_void_pointer: xcb_void_cookie_t = undefined;
                 var return_geo: xcb_get_geometry_cookie_t = undefined;
@@ -686,6 +729,8 @@ warn("{}\n", e);
 
                 try event_results.w_changes.append(win_changes);
                 try event_results.w_map.append(e.window);
+
+                // TODO: set border default color
             },
             XCB_UNMAP_NOTIFY => {
                 warn("xcb: unmap notify\n");
@@ -706,63 +751,47 @@ warn("{}\n", e);
             },
             XCB_MOTION_NOTIFY => {
                 // warn("xcb: motion notify\n");
-                var e = @ptrCast(*xcb_motion_notify_event_t, &ev);
-
-                if (e.child != 0) continue;
-
-                // TODO: try to improve performance
-                var focused_id = getFocusedWindow(dpy);
-                const win = windows.get(focused_id);
-                const mouse_screen = getScreenOnLocation(e.root_x, e.root_y, screens);
-                if (win) |window| {
-                    if (mouse_screen) |m_screen| {
-                        const focused_screen = screens.at(window.value.screen_index);
-                        if (m_screen.index != focused_screen.index) {
-                            unfocusWindow(dpy, focused_id, g_default_border_color);
-
-                            const new_focus = blk: {
-                                if (m_screen.windows.len > 0) {
-                                    break :blk m_screen.windows.at(0);
-                                }
-
-                                break :blk screen_root;
-                            };
-
-
-                            focusWindow(dpy, new_focus, g_active_border_color);
-                        }
-                    }
-                } else if (focused_id == screen_root) {
-                    if (mouse_screen) |m_screen| {
-                        if (m_screen.windows.len > 0) {
-                            focusWindow(dpy, m_screen.windows.at(0), g_active_border_color);
-                        }
-                    }
-                }
+                // var e = @ptrCast(*xcb_motion_notify_event_t, &ev);
             },
             XCB_KEY_PRESS => {
                 warn("xcb: key press before function call\n");
-                keypressEvent(allocator, dpy, ev, screens, groups, windows, keymap[0..], &window_changes, &map_windows, &unmap_windows);
+                keypressEvent(allocator, dpy, ev, screens, groups, windows, keymap[0..], &event_results);
             },
             XCB_KEY_RELEASE => {
                 warn("xcb: key release\n");
             },
             XCB_ENTER_NOTIFY => {
-                warn("xcb: enter notify\n");
+                // warn("xcb: enter notify\n");
                 var e = @ptrCast(*xcb_enter_notify_event_t, &ev);
-                if (e.detail != _XCB_NOTIFY_DETAIL_ANCESTOR
-                    and e.detail != _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) continue;
+                // if (e.detail == _XCB_NOTIFY_DETAIL_ANCESTOR) warn("ancestor\n");
+                // if (e.detail == _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) warn("virtual\n");
+
+                // if (e.detail != _XCB_NOTIFY_DETAIL_ANCESTOR) continue;
+                // if (e.detail != _XCB_NOTIFY_DETAIL_NONLINEAR_VIRTUAL) continue;
+                if (e.detail == @intCast(u8, @enumToInt(XCB_NOTIFY_DETAIL_INFERIOR))) continue;
                 warn("{}\n", e);
 
-                if (windows.get(e.event)) |win| {
+                // const focused_window = getFocusedWindow(dpy);
+                // First check if it is screen 'root'
+                const screen_root_id: xcb_window_t = blk: {
+                    for (screens.toSliceConst()) |s| {
+                        if (s.root_id == e.event) {
+                            break :blk s.root_id;
+                        }
+                    }
+                    break :blk 0;
+                };
+                // warn("root_id: {}\n", screen_root_id);
+                if (screen_root_id != 0) {
+                    warn("focus screen\n");
+                    event_results.focus.new = screen_root_id;
+                } else if (windows.get(e.event)) |win| {
+                    warn("focus window\n");
                     const focused_window = getFocusedWindow(dpy);
                     if (focused_window == win.value.id) continue;
                     var active_screen = getScreen(win.value.screen_index, screens);
 
-                    warn("change window\n");
-                    unfocusWindow(dpy, focused_window, g_default_border_color);
-                    focusWindow(dpy, win.value.id, g_active_border_color);
-
+                    event_results.focus.new = win.value.id;
                     _ = active_screen.removeWindow(e.event);
                     active_screen.addWindow(e.event);
 
@@ -776,6 +805,8 @@ warn("{}\n", e);
                     var target_group = &groups.toSlice()[win_group_index];
                     target_group.removeWindow(win.value.id, allocator);
                     target_group.addWindow(win.value.id, allocator);
+
+                    // focusWindow(dpy, win.value.id, g_active_border_color);
                 }
             },
             else => {
@@ -793,81 +824,74 @@ warn("{}\n", e);
         }
 
         // Focus window
-        // TODO: Won't fire if window is destroyed.
-        // TODO: xcb_set_input_focus doesn't change focus.
+        // @continue
+        // var mouse_screen = getActiveMouseScreen(dpy, screens);
         const current_focus = getFocusedWindow(dpy);
         warn("current focus: {}\n", current_focus);
-        if (event_results.w_map.len > 0) {
-            const new_focus = event_results.w_map.at(event_results.w_map.len - 1);
-            if (current_focus != new_focus) {
-                warn("focus change\n");
-                warn("new focus: {}\n", new_focus);
-                const attr_mask = _XCB_CW_BORDER_PIXEL;
-                // set default border color if current window if not root
-                if (current_focus != g_screen_root) {
-                    var attr = WindowAttributes.{
-                        .id = current_focus,
-                        .mask = attr_mask,
-                        .values = ArrayList(u32).init(allocator),
-                    };
-                    attr.values.append(g_default_border_color) catch {
-                        warn("main loop (change window focus): Failed to add value to attributes values field.\n");
-                    };
-                    event_results.w_attrs.append(attr) catch {
-                        warn("main lopp (): Failed to add attribute.\n");
-                    };
-                }
+        // const new_focus = blk: {
+        //     if (mouse_screen.windows.len > 0) {
+        //         break :blk mouse_screen.windows.at(0);
+        //     }
+        //     break :blk g_screen_root;
+        // };
+        const new_focus = event_results.focus.new;
+        if (current_focus != new_focus) {
+            warn("new focus: {}\n", new_focus);
+            warn("current focus: {}\n", current_focus);
+            const attr_mask = _XCB_CW_BORDER_PIXEL;
+            // set default border color if current window if not root
+            // if (current_focus != g_screen_root) {
+            //     var attr = WindowAttributes.{
+            //         .id = current_focus,
+            //         .mask = attr_mask,
+            //         .values = ArrayList(u32).init(allocator),
+            //     };
+            //     attr.values.append(g_default_border_color) catch {
+            //         warn("main loop (change window focus): Failed to add value to attributes values field.\n");
+            //     };
+            //     event_results.w_attrs.append(attr) catch {
+            //         warn("main lopp (): Failed to add attribute.\n");
+            //     };
+            // }
 
-                // set focused window color
-                var attr = WindowAttributes.{
-                    .id = new_focus,
-                    .mask = attr_mask,
-                    .values = ArrayList(u32).init(allocator),
-                };
-                attr.values.append(g_active_border_color) catch {
-                    warn("main loop (change window focus): Failed to add value to attributes values field.\n");
-                };
-                event_results.w_attrs.append(attr) catch {
-                    warn("main lopp (): Failed to add attribute.\n");
-                };
+            // set focused window color
+            var attr = WindowAttributes.{
+                .id = new_focus,
+                .mask = attr_mask,
+                .values = ArrayList(u32).init(allocator),
+            };
+            attr.values.append(g_active_border_color) catch {
+                warn("main loop (change window focus): Failed to add value to attributes values field.\n");
+            };
+            event_results.w_attrs.append(attr) catch {
+                warn("main lopp (): Failed to add attribute.\n");
+            };
 
-                // set window focus
-                var change = WindowChange.{
-                    .id = new_focus,
-                    .mask = _XCB_CONFIG_WINDOW_STACK_MODE,
-                    .values = ArrayList(i32).init(allocator),
-                };
-                change.values.append(_XCB_STACK_MODE_ABOVE) catch {
-                    warn("main loop (change window focus): Failed to add value to change values field.\n");
-                };
-                event_results.w_changes.append(change) catch {
-                    warn("main lopp (): Failed to add window change.\n");
-                };
+            // set window focus
+            var change = WindowChange.{
+                .id = new_focus,
+                .mask = _XCB_CONFIG_WINDOW_STACK_MODE,
+                .values = ArrayList(i32).init(allocator),
+            };
+            change.values.append(_XCB_STACK_MODE_ABOVE) catch {
+                warn("main loop (change window focus): Failed to add value to change values field.\n");
+            };
+            event_results.w_changes.append(change) catch {
+                warn("main lopp (): Failed to add window change.\n");
+            };
 
-                // NOTE: window needs to be visible/mapped to focus it
-                _ = _xcb_map_window(dpy, new_focus, &return_pointer);
-                event_results.w_map.shrink(event_results.w_map.len - 1);
-                _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
-            }
+            // NOTE: window needs to be visible/mapped to focus it
+            _ = _xcb_map_window(dpy, new_focus, &return_pointer);
+            _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, new_focus, _XCB_TIME_CURRENT_TIME, &return_cookie);
         }
 
         // Set window attributes
-        // for (window_attributes.toSlice()) |attr| {
-        //     warn("set window attributes =====\n");
-        //     _ = _xcb_change_window_attributes(dpy, attr.id, attr.mask, @ptrCast(?*const c_void, attr.values.toSlice().ptr), &return_pointer);
-        // }
-
-        // Set window attributes
+        // TODO: X11 error: BadWindow
+        // This happens with window that is already "on screen" before starting program
         for (event_results.w_attrs.toSlice()) |attr| {
             warn("event_results: set window attributes =====\n");
             _ = _xcb_change_window_attributes(dpy, attr.id, attr.mask, @ptrCast(?*const c_void, attr.values.toSlice().ptr), &return_pointer);
         }
-
-        // Configure windows
-        // for (window_changes.toSlice()) |change| {
-        //     warn("change window =====\n");
-        //     _ = _xcb_configure_window(dpy, change.id, change.mask, @ptrCast(?*const c_void, change.values.toSlice().ptr), &return_pointer);
-        // }
 
         // Configure windows
         for (event_results.w_changes.toSlice()) |change| {
@@ -876,22 +900,10 @@ warn("{}\n", e);
         }
 
         // Unmap windows
-        // for (unmap_windows.toSlice()) |id| {
-        //     warn("unmap window =====\n");
-        //     _ = _xcb_unmap_window(dpy, id, &return_pointer);
-        // }
-
-        // Unmap windows
         for (event_results.w_unmap.toSlice()) |id| {
             warn("event_results: unmap window =====\n");
             _ = _xcb_unmap_window(dpy, id, &return_pointer);
         }
-
-        // Map windows
-        // for (map_windows.toSlice()) |id| {
-        //     warn("map window =====\n");
-        //     _ = _xcb_map_window(dpy, id, &return_pointer);
-        // }
 
         // Map windows
         for (event_results.w_map.toSlice()) |id| {
@@ -1415,7 +1427,7 @@ fn drawAllScreenGrids(dpy: ?*xcb_connection_t, allocator: *Allocator, screens: A
 }
 
 
-fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap, keymap: []Key, window_changes: *ArrayList(WindowChange), map_windows: *ArrayList(xcb_window_t), unmap_windows: *ArrayList(xcb_window_t)) void {
+fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap, keymap: []Key, event_results: *EventResults) void {
     warn("xcb: key press\n");
     const e = @intToPtr(*xcb_key_press_event_t, @ptrToInt(&ev));
     // warn("{}\n", e);
@@ -1453,7 +1465,7 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
                             warn("keypressEvent: Failed to get window move changes.\n");
                             return;
                         };
-                        window_changes.append(change) catch {
+                        event_results.w_changes.append(change) catch {
                             warn("keypressEvent: Failed to add window move changes.\n");
                             return;
                         };
@@ -1484,12 +1496,12 @@ fn keypressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_generic
                             return;
                         };
                         if (change) |c| {
-                            window_changes.append(c) catch {
+                            event_results.w_changes.append(c) catch {
                                 warn("keypressEvent: Failed to add window move changes.\n");
                                 return;
                             };
                         } else {
-                            unmap_windows.append(e.event) catch {
+                            event_results.w_unmap.append(e.event) catch {
                                 warn("keypressEvent: Failed to add window to unmap array list.\n");
                                 return;
                             };
@@ -2423,15 +2435,16 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 }
 
 
+// TODO: bug when choosing third group. Only thrid group will be in screen.
 fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), windows: WindowsHashMap) void {
     var return_cookie: xcb_void_cookie_t = undefined;
+    // TODO: return group instead
     var selected_group_index = blk: {
         var e_ = @intToPtr(?[*]struct_xcb_key_press_event_t, @ptrToInt(e));
         const key_symbols = xcb_key_symbols_alloc(dpy);
         const keysym = xcb_key_press_lookup_keysym(key_symbols, e_, 0);
         xcb_key_symbols_free(key_symbols);
-        for (groups.toSlice()) |g, i| {
-            var group = @intToPtr(*Group, @ptrToInt(&g));
+        for (groups.toSlice()) |*group, i| {
             const sym = @intCast(u32, xlib.XStringToKeysym(@ptrCast(?[*]const u8, group.str_value[0..].ptr)));
             if (sym == keysym) {
                 break :blk i;
@@ -2502,16 +2515,17 @@ fn keypressToggleGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
 
 
 // TODO: Something is wrong with window dimension calculations
+// TODO: Bug window isn't moved visually. Might be a (xcb_)flush problem.
 fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_press_event_t, screens: ArrayList(Screen), groups: ArrayList(Group), win: *Window) !?WindowChange {
     var return_cookie: xcb_void_cookie_t = undefined;
     warn("move window to a group\n");
+    // TODO: return group instead.
     var dest_group_index = blk: {
         var e_ = @intToPtr(?[*]struct_xcb_key_press_event_t, @ptrToInt(e));
         const key_symbols = xcb_key_symbols_alloc(dpy);
         const keysym = xcb_key_press_lookup_keysym(key_symbols, e_, 0);
         xcb_key_symbols_free(key_symbols);
-        for (groups.toSlice()) |g, i| {
-            var group = @intToPtr(*Group, @ptrToInt(&g));
+        for (groups.toSlice()) |*group, i| {
             const sym = @intCast(u32, xlib.XStringToKeysym(@ptrCast(?[*]const u8, group.str_value[0..].ptr)));
             if (sym == keysym) {
                 break :blk i;

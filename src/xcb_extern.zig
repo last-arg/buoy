@@ -66,3 +66,5 @@ pub extern fn _xcb_clear_area(c: ?*xcb_connection_t, exposures: u8, window: xcb_
 
 pub extern fn _xcb_send_event(c: ?*xcb_connection_t, propagate: u8, destination: xcb_window_t, event_mask: u32, event: ?[*]const u8, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
+pub extern fn _xcb_create_window(c: ?*xcb_connection_t, depth: u8, wid: xcb_window_t, parent: xcb_window_t, x: i16, y: i16, width: u16, height: u16, border_width: u16, _class: u16, visual: xcb_visualid_t, value_mask: u32, value_list: ?*const c_void, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
+

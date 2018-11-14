@@ -62,4 +62,6 @@ xcb_void_cookie_t *_xcb_free_gc(xcb_connection_t *conn, xcb_gcontext_t gc, xcb_v
 xcb_void_cookie_t *_xcb_clear_area(xcb_connection_t *conn, uint8_t exposures, xcb_window_t window, int16_t x, int16_t y, uint16_t width, uint16_t height, xcb_void_cookie_t *return_pointer);
 
 xcb_void_cookie_t *_xcb_send_event(xcb_connection_t *conn, uint8_t propagate, xcb_window_t destination, uint32_t event_mask, const char *event, xcb_void_cookie_t *return_pointer);
-	
+
+
+xcb_void_cookie_t *_xcb_create_window(xcb_connection_t *conn, uint8_t depth, xcb_window_t wid, xcb_window_t parent, int16_t x, int16_t y, uint16_t width, uint16_t height, uint16_t border_width, uint16_t _class, xcb_visualid_t visual, uint32_t value_mask, const void *value_list, xcb_void_cookie_t *return_pointer);

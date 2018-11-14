@@ -185,3 +185,9 @@ xcb_void_cookie_t *_xcb_send_event(xcb_connection_t *conn, uint8_t propagate, xc
   return return_pointer;
 }
 
+xcb_void_cookie_t *_xcb_create_window(xcb_connection_t *conn, uint8_t depth, xcb_window_t wid, xcb_window_t parent, int16_t x, int16_t y, uint16_t width, uint16_t height, uint16_t border_width, uint16_t _class, xcb_visualid_t visual, uint32_t value_mask, const void *value_list, xcb_void_cookie_t *return_pointer) {
+  xcb_void_cookie_t result = xcb_create_window(conn, depth, wid, parent, x, y, width, height, border_width, _class, visual, value_mask, value_list);
+  *return_pointer = result;
+  return return_pointer;
+}
+
