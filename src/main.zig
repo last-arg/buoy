@@ -23,7 +23,7 @@ use @import("xcb_extern.zig");
 
 const Screen = ScreenFn();
 fn ScreenFn() type {
-    return struct.{
+    return struct {
         const Self = @This();
         allocator: *Allocator,
         index: u8,
@@ -33,7 +33,7 @@ fn ScreenFn() type {
         windows: ArrayList(xcb_window_t),
 
         pub fn init(index: u8, root_id: xcb_window_t, geo: Geometry, allocator: *Allocator) !Self {
-            var screen = Self.{
+            var screen = Self {
                 .index = index,
                 .root_id = root_id,
                 .allocator = allocator,
@@ -122,7 +122,7 @@ fn ScreenFn() type {
                 new_y += dest_screen.geo.y;
             }
 
-            return Geometry.{
+            return Geometry {
                 .x = new_x,
                 .y = new_y,
                 .width = @floatToInt(u16, new_width),
@@ -134,7 +134,7 @@ fn ScreenFn() type {
 }
 
 // TODO: add allocator field
-const Group = struct.{
+const Group = struct {
     index: u8,
     windows: ArrayList(xcb_window_t),
     str_value: []u8,
@@ -161,21 +161,21 @@ const Group = struct.{
     }
 };
 
-const Window = struct.{
+const Window = struct {
     id: xcb_window_t,
     screen_index: u8,
     group_index: u8,
     geo: Geometry,
 };
 
-const Geometry = struct.{
+const Geometry = struct {
     x: i16,
     y: i16,
     width: u16,
     height: u16,
 };
 
-const Point = struct.{
+const Point = struct {
     x: i32,
     y: i32,
 };
@@ -208,21 +208,21 @@ const g_mask_alt = @intCast(u16, @enumToInt(XCB_MOD_MASK_1));
 const g_mask_ctrl = @intCast(u16, @enumToInt(XCB_MOD_MASK_CONTROL));
 const g_mask_shift = @intCast(u16, @enumToInt(XCB_MOD_MASK_SHIFT));
 
-const MouseAction = enum.{
+const MouseAction = enum {
     Resize,
     Move,
     ResizeInBounds,
     MoveInBounds,
 };
 
-const MouseEvent = struct.{
+const MouseEvent = struct {
     const Self = @This();
     index: u8,
     mod: u16,
     action: MouseAction,
 
     pub fn create(index: u8, mod: u16, action: MouseAction) Self {
-        return Self.{
+        return Self {
             .index = index,
             .mod = mod,
             .action = action,
@@ -231,21 +231,21 @@ const MouseEvent = struct.{
 };
 
 
-var mouse_mapping = []MouseEvent.{
+var mouse_mapping = []MouseEvent {
     MouseEvent.create(@intCast(u8, @enumToInt(XCB_BUTTON_INDEX_1)), g_mod, MouseAction.MoveInBounds),
     MouseEvent.create(@intCast(u8, @enumToInt(XCB_BUTTON_INDEX_1)), g_mod | g_mask_shift, MouseAction.Move),
     MouseEvent.create(@intCast(u8, @enumToInt(XCB_BUTTON_INDEX_3)), g_mod, MouseAction.ResizeInBounds),
     MouseEvent.create(@intCast(u8, @enumToInt(XCB_BUTTON_INDEX_3)), g_mod | g_mask_shift, MouseAction.Resize),
 };
 
-const Direction = enum.{
+const Direction = enum {
     Left,
     Right,
     Up,
     Down,
 };
 
-const Action = union(enum).{
+const Action = union(enum) {
     Move: Direction,
     Change: Direction,
     Shift: Direction,
@@ -256,7 +256,7 @@ const Action = union(enum).{
 };
 
 
-const Key = struct.{
+const Key = struct {
     const Self = @This();
     // TODO: try to remove 'c string'
     char: [*]const u8,
@@ -264,7 +264,7 @@ const Key = struct.{
     action: Action,
 
     pub fn create(char: [*]const u8, mod: u16, action: Action) Self {
-        return Self.{
+        return Self {
             .char = char,
             .mod = mod,
             .action = action,
@@ -275,17 +275,17 @@ const Key = struct.{
 // TODO: move it into main ???
 // NOTE: At the moment it is generated in compile time.
 // Unlike 'keymap' variable which needs runtime.
-var root_keymap = []Key.{
-    Key.create(c"d", g_mod, Action.{.Debug = []const []const u8.{"all"}}),
+var root_keymap = []Key {
+    Key.create(c"d", g_mod, Action {.Debug = []const []const u8 {"all"}}),
 
-    Key.create(c"t", g_mod, Action.{.Spawn = []const []const u8.{"xterm"}}),
-    Key.create(c"r", g_mod, Action.{.Spawn = []const []const u8.{"st"}}),
+    Key.create(c"t", g_mod, Action {.Spawn = []const []const u8 {"xterm"}}),
+    Key.create(c"r", g_mod, Action {.Spawn = []const []const u8 {"st"}}),
 
-    Key.create(c"1", g_mod, Action.{.ToggleGroup = {}}),
-    Key.create(c"2", g_mod, Action.{.ToggleGroup = {}}),
-    Key.create(c"3", g_mod, Action.{.ToggleGroup = {}}),
-    Key.create(c"4", g_mod, Action.{.ToggleGroup = {}}),
-    Key.create(c"5", g_mod, Action.{.ToggleGroup = {}}),
+    Key.create(c"1", g_mod, Action {.ToggleGroup = {}}),
+    Key.create(c"2", g_mod, Action {.ToggleGroup = {}}),
+    Key.create(c"3", g_mod, Action {.ToggleGroup = {}}),
+    Key.create(c"4", g_mod, Action {.ToggleGroup = {}}),
+    Key.create(c"5", g_mod, Action {.ToggleGroup = {}}),
 };
 
 
@@ -293,19 +293,19 @@ var root_keymap = []Key.{
 // NOTE: xcb_configure_window mask/values order
 // X, Y, WIDTH, HEIGHT, BORDER_WIDTH, SIBLING, STACK_MODE
 // TODO: make different functions for position, dimesion, border width ???
-const WindowChange = struct.{
+const WindowChange = struct {
     id: xcb_window_t,
     mask: u16,
     values: ArrayList(i32),
 };
 
-const WindowAttributes = struct.{
+const WindowAttributes = struct {
     id: xcb_window_t,
     mask: u32,
     values: ArrayList(u32),
 };
 // Byte count: 28
-const PackedEvent = struct.{
+const PackedEvent = struct {
     response_type: u8,
     pad0: u8,
     sequence: u16,
@@ -315,9 +315,9 @@ const PackedEvent = struct.{
 
 
 fn EventResultsFn() type {
-    return struct.{
+    return struct {
         const Self = @This();
-        const Focus = struct.{
+        const Focus = struct {
             current: xcb_window_t,
             new: xcb_window_t,
         };
@@ -333,8 +333,8 @@ fn EventResultsFn() type {
         allocator: *Allocator,
 
         pub fn init(allocator: *Allocator) Self {
-            return Self.{
-                .focus = Focus.{
+            return Self {
+                .focus = Focus {
                     .current = 0,
                     .new = 0,
                 },
@@ -374,27 +374,27 @@ pub fn main() !void {
     var group_count: u8 = 10;
 
     // Set keyboard mappings
-    var keymap = []Key.{
-        Key.create(c"h", g_mod | g_mask_ctrl, Action.{.Move = Direction.Left}),
-        Key.create(c"l", g_mod | g_mask_ctrl, Action.{.Move = Direction.Right}),
-        Key.create(c"k", g_mod | g_mask_ctrl, Action.{.Move = Direction.Up}),
-        Key.create(c"j", g_mod | g_mask_ctrl, Action.{.Move = Direction.Down}),
+    var keymap = []Key {
+        Key.create(c"h", g_mod | g_mask_ctrl, Action {.Move = Direction.Left}),
+        Key.create(c"l", g_mod | g_mask_ctrl, Action {.Move = Direction.Right}),
+        Key.create(c"k", g_mod | g_mask_ctrl, Action {.Move = Direction.Up}),
+        Key.create(c"j", g_mod | g_mask_ctrl, Action {.Move = Direction.Down}),
 
-        Key.create(c"h", g_mod | g_mask_shift, Action.{.Shift = Direction.Left}),
-        Key.create(c"l", g_mod | g_mask_shift, Action.{.Shift = Direction.Right}),
-        Key.create(c"k", g_mod | g_mask_shift, Action.{.Shift = Direction.Up}),
-        Key.create(c"j", g_mod | g_mask_shift, Action.{.Shift = Direction.Down}),
+        Key.create(c"h", g_mod | g_mask_shift, Action {.Shift = Direction.Left}),
+        Key.create(c"l", g_mod | g_mask_shift, Action {.Shift = Direction.Right}),
+        Key.create(c"k", g_mod | g_mask_shift, Action {.Shift = Direction.Up}),
+        Key.create(c"j", g_mod | g_mask_shift, Action {.Shift = Direction.Down}),
 
-        Key.create(c"h", g_mod, Action.{.Change = Direction.Left}),
-        Key.create(c"l", g_mod, Action.{.Change = Direction.Right}),
-        Key.create(c"k", g_mod, Action.{.Change = Direction.Up}),
-        Key.create(c"j", g_mod, Action.{.Change = Direction.Down}),
+        Key.create(c"h", g_mod, Action {.Change = Direction.Left}),
+        Key.create(c"l", g_mod, Action {.Change = Direction.Right}),
+        Key.create(c"k", g_mod, Action {.Change = Direction.Up}),
+        Key.create(c"j", g_mod, Action {.Change = Direction.Down}),
 
-        Key.create(c"1", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
-        Key.create(c"2", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
-        Key.create(c"3", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
-        Key.create(c"4", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
-        Key.create(c"5", g_mod | g_mask_shift, Action.{.WindowToGroup = {}}),
+        Key.create(c"1", g_mod | g_mask_shift, Action {.WindowToGroup = {}}),
+        Key.create(c"2", g_mod | g_mask_shift, Action {.WindowToGroup = {}}),
+        Key.create(c"3", g_mod | g_mask_shift, Action {.WindowToGroup = {}}),
+        Key.create(c"4", g_mod | g_mask_shift, Action {.WindowToGroup = {}}),
+        Key.create(c"5", g_mod | g_mask_shift, Action {.WindowToGroup = {}}),
     };
 
     // TODO: Change/Add different allocator(s)
@@ -410,7 +410,7 @@ pub fn main() !void {
 
     var return_cookie: xcb_void_cookie_t = undefined;
 
-    var value_list = []c_int.{
+    var value_list = []c_int {
         @enumToInt(XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT)
         // | @enumToInt(XCB_EVENT_MASK_EXPOSURE)
         // | @enumToInt(XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY)
@@ -496,7 +496,7 @@ pub fn main() !void {
                 warn("Creating/Initializing groups error: Failed memory allocation for groups value field.\n");
                 continue;
             };
-            var group = Group.{
+            var group = Group {
                 .index = i,
                 .windows = ArrayList(xcb_window_t).init(allocator),
                 .str_value = val,
@@ -516,7 +516,7 @@ pub fn main() !void {
                         | @intCast(u32, @enumToInt(XCB_CW_EVENT_MASK))
                         | @intCast(u32, @enumToInt(XCB_CW_DONT_PROPAGATE));
 
-        const values = []u32.{ @intCast(u32, @enumToInt(XCB_BACKING_STORE_ALWAYS))
+        const values = []u32 { @intCast(u32, @enumToInt(XCB_BACKING_STORE_ALWAYS))
                              , 1
                              , _XCB_EVENT_MASK_ENTER_WINDOW
                              , 1};
@@ -530,7 +530,7 @@ pub fn main() !void {
         }) {
             var monitor = return_monitors_iter.data.?[0];
 
-            var geo = Geometry.{
+            var geo = Geometry {
                 .x = monitor.x,
                 .y = monitor.y,
                 .width = monitor.width,
@@ -579,7 +579,7 @@ pub fn main() !void {
         while (i < children_count) : (i+=1) {
             warn("{}\n", children.?[i]);
             var win_id = children.?[i];
-            var fake_event = PackedEvent.{
+            var fake_event = PackedEvent {
                 .response_type = XCB_MAP_REQUEST,
                 .pad0 = 0,
                 .sequence = undefined,
@@ -688,7 +688,7 @@ warn("{}\n", e);
 
                 if (geo == null) continue;
 
-                const win_geo = Geometry.{
+                const win_geo = Geometry {
                     .x = geo.?[0].x,
                     .y = geo.?[0].y,
                     .width = geo.?[0].width,
@@ -702,12 +702,12 @@ warn("{}\n", e);
                 var group = &groups.toSlice()[group_index];
                 const win = try addWindow(allocator, e.window, new_geo, active_screen, group, &windows);
                 var attr_mask: u16 = _XCB_CW_EVENT_MASK;
-                var attr_values = []u32.{_XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY};
+                var attr_values = []u32 {_XCB_EVENT_MASK_ENTER_WINDOW | _XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY};
                 _ = _xcb_change_window_attributes(dpy, e.window, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 
                 setWindowEvents(dpy, e.window, keymap[0..]);
 
-                var win_changes = WindowChange.{
+                var win_changes = WindowChange {
                     .id = win.id,
                     .mask = 0,
                     .values = ArrayList(i32).init(allocator),
@@ -719,7 +719,7 @@ warn("{}\n", e);
                                   | @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_HEIGHT))
                                   | @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_BORDER_WIDTH));
 
-                try win_changes.values.appendSlice([]i32.{
+                try win_changes.values.appendSlice([]i32 {
                     new_geo.x,
                     new_geo.y,
                     new_geo.width,
@@ -841,7 +841,7 @@ warn("{}\n", e);
             const attr_mask = _XCB_CW_BORDER_PIXEL;
             // set default border color if current window if not root
             // if (current_focus != g_screen_root) {
-            //     var attr = WindowAttributes.{
+            //     var attr = WindowAttributes {
             //         .id = current_focus,
             //         .mask = attr_mask,
             //         .values = ArrayList(u32).init(allocator),
@@ -855,7 +855,7 @@ warn("{}\n", e);
             // }
 
             // set focused window color
-            var attr = WindowAttributes.{
+            var attr = WindowAttributes {
                 .id = new_focus,
                 .mask = attr_mask,
                 .values = ArrayList(u32).init(allocator),
@@ -868,7 +868,7 @@ warn("{}\n", e);
             };
 
             // set window focus
-            var change = WindowChange.{
+            var change = WindowChange {
                 .id = new_focus,
                 .mask = _XCB_CONFIG_WINDOW_STACK_MODE,
                 .values = ArrayList(i32).init(allocator),
@@ -927,7 +927,7 @@ warn("{}\n", e);
 
 fn raiseWindow(dpy: ?*xcb_connection_t, window: xcb_window_t) void {
     var return_pointer: xcb_void_cookie_t = undefined;
-    const config_values = @ptrCast(?*const c_void, &([]u32.{_XCB_STACK_MODE_ABOVE}));
+    const config_values = @ptrCast(?*const c_void, &([]u32 {_XCB_STACK_MODE_ABOVE}));
     _ = _xcb_configure_window(dpy, window, _XCB_CONFIG_WINDOW_STACK_MODE, config_values, &return_pointer);
 }
 
@@ -935,7 +935,7 @@ fn raiseWindow(dpy: ?*xcb_connection_t, window: xcb_window_t) void {
 fn moveWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, x: i32, y: i32) void {
     var return_pointer: xcb_void_cookie_t = undefined;
     var win_mask: u16 = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y;
-    var win_values = []i32.{x, y};
+    var win_values = []i32 {x, y};
 
     _ = _xcb_configure_window(dpy, window, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
 }
@@ -944,7 +944,7 @@ fn moveWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, x: i32, y: i32) voi
 fn resizeWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, width: u32, height: u32) void {
     var return_pointer: xcb_void_cookie_t = undefined;
     var win_mask: u16 = _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
-    var win_values = []u32.{width, height};
+    var win_values = []u32 {width, height};
 
     _ = _xcb_configure_window(dpy, window, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
 
@@ -965,10 +965,10 @@ fn focusWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, color: u32) void {
     _ = _xcb_set_input_focus(dpy, _XCB_INPUT_FOCUS_PARENT, window, _XCB_TIME_CURRENT_TIME, &return_cookie);
 
     const attr_mask = _XCB_CW_BORDER_PIXEL;
-    var attr_values = []u32.{color};
+    var attr_values = []u32 {color};
     _ = _xcb_change_window_attributes(dpy, window, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 
-    const config_values = @ptrCast(?*const c_void, &([]u32.{_XCB_STACK_MODE_ABOVE}));
+    const config_values = @ptrCast(?*const c_void, &([]u32 {_XCB_STACK_MODE_ABOVE}));
     _ = _xcb_configure_window(dpy, window, _XCB_CONFIG_WINDOW_STACK_MODE, config_values, &return_cookie);
 }
 
@@ -980,7 +980,7 @@ fn unfocusWindow(dpy: ?*xcb_connection_t, window: xcb_window_t, color: u32) void
 
     var return_cookie: xcb_void_cookie_t = undefined;
     const attr_mask = _XCB_CW_BORDER_PIXEL;
-    var attr_values = []u32.{color};
+    var attr_values = []u32 {color};
     _ = _xcb_change_window_attributes(dpy, focus_reply.?[0].focus, attr_mask, @ptrCast(?*const c_void, &attr_values), &return_cookie);
 }
 
@@ -1045,7 +1045,7 @@ fn inBoundsWindowGeometry(x: i32, y: i32, width: i32, height: i32, screen: *Scre
         new_height = g_window_min_height;
     }
 
-    return Geometry.{
+    return Geometry {
         .x = @intCast(i16, new_x),
         .y = @intCast(i16, new_y),
         .width = @intCast(u16, new_width),
@@ -1096,7 +1096,7 @@ fn getWindowGeometryInside(w_attr: xcb_get_geometry_reply_t, screen: *Screen) Ge
 
     y = std.math.max(sp, y) + screen.geo.y;
 
-    return Geometry.{
+    return Geometry {
         .x = @intCast(i16, x),
         .y = @intCast(i16, y),
         .width = @intCast(u16, width),
@@ -1162,7 +1162,7 @@ fn debugScreenWindows(ll: ArrayList(Screen)) void {
 
 
 fn addWindow(allocator: *Allocator, win: xcb_window_t, geo: Geometry, screen: *Screen, group: *Group, windows: *WindowsHashMap) !Window {
-    var new_window = Window.{
+    var new_window = Window {
         .id = win,
         .screen_index = screen.index,
         .group_index = group.index,
@@ -1301,7 +1301,7 @@ fn configureWindow(allocator: *Allocator, e: *xcb_configure_request_event_t) !Wi
 
     if (i == 0) return error.NoAttributeChanges;
 
-    var change = WindowChange.{
+    var change = WindowChange {
         .id = e.window,
         .mask = config_mask,
         .values = ArrayList(i32).init(allocator),
@@ -1321,7 +1321,7 @@ fn resizeAndMoveWindow(dpy: ?*xcb_connection_t, win: xcb_window_t, active_screen
     var new_geo = getWindowGeometryInside(geo.?[0], active_screen);
 
     var win_mask: u16 = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y | _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
-    var win_values = []i32.{new_geo.x, new_geo.y, new_geo.width, new_geo.height};
+    var win_values = []i32 {new_geo.x, new_geo.y, new_geo.width, new_geo.height};
 
     var return_pointer: xcb_void_cookie_t = undefined;
     _ = _xcb_configure_window(dpy, win, win_mask, @ptrCast(?*const c_void, &win_values), &return_pointer);
@@ -1365,7 +1365,7 @@ fn getGridRectangles(allocator: *Allocator, screen: Screen) ![]xcb_rectangle_t {
                 height += @rem(screen.geo.height - 2 * g_screen_padding, g_grid_rows);
             }
 
-            var rect = xcb_rectangle_t.{
+            var rect = xcb_rectangle_t {
                 .x = screen.geo.x + @intCast(i16, tile_width * col + g_screen_padding),
                 .y = screen.geo.y + @intCast(i16, tile_height * row + g_screen_padding),
                 .width = width,
@@ -1410,7 +1410,7 @@ fn getGridRows(allocator: *Allocator, screen: Screen) !ArrayList(i32) {
 fn drawScreenGrid(dpy: ?*xcb_connection_t, screen_root: xcb_window_t, rects: []xcb_rectangle_t) void {
     var return_void: xcb_void_cookie_t = undefined;
     var gc_mask = u32(_XCB_GC_FOREGROUND);
-    var gc_values = []u32.{g_grid_color};
+    var gc_values = []u32 {g_grid_color};
     const root_gc_id_ = xcb_generate_id(dpy);
     _ = _xcb_create_gc(dpy, root_gc_id_, screen_root, gc_mask, @ptrCast(?*const c_void, &gc_values), &return_void);
     _ = _xcb_poly_rectangle(dpy, screen_root, root_gc_id_, g_grid_total, @ptrCast(?[*]xcb_rectangle_t, rects.ptr), &return_void);
@@ -1551,7 +1551,7 @@ fn keypressMove(allocator: *Allocator, direction: Direction, win: *Window, scree
         },
     }
 
-    var change = WindowChange.{
+    var change = WindowChange {
         .id = win.id,
         .mask = mask,
         .values = ArrayList(i32).init(allocator),
@@ -1873,7 +1873,7 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
-    const win_center = Point.{
+    const win_center = Point {
         .x = win_geo.x + @intCast(i16, win_geo.width / 2) + @intCast(i16, g_border_width),
         .y = win_geo.y + @intCast(i16, win_geo.height / 2) + @intCast(i16, g_border_width),
     };
@@ -1904,11 +1904,11 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         }
     };
 
-    var t1 = Point.{
+    var t1 = Point {
         .x = win_center.x - largest_distance,
         .y = win_center.y - largest_distance,
     };
-    var t2 = Point.{
+    var t2 = Point {
         .x = win_center.x - largest_distance,
         .y = win_center.y + largest_distance,
     };
@@ -1921,7 +1921,7 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         if (win_s == null) continue;
         const geo = win_s.?.value.geo;
 
-        var closest_win_point = Point.{
+        var closest_win_point = Point {
             .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
             .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
         };
@@ -1965,7 +1965,7 @@ fn keypressChangeLeft(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
             if (x_midpoint > win_center.x) continue;
 
-            const closest_win_point = Point.{
+            const closest_win_point = Point {
                 .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
                 .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
             };
@@ -2015,7 +2015,7 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
-    const win_center = Point.{
+    const win_center = Point {
         .x = win_geo.x + @intCast(i16, win_geo.width / 2) + @intCast(i16, g_border_width),
         .y = win_geo.y + @intCast(i16, win_geo.height / 2) + @intCast(i16, g_border_width),
     };
@@ -2049,11 +2049,11 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
     };
 
 
-    const t1 = Point.{
+    const t1 = Point {
         .x = win_center.x + largest_distance,
         .y = win_center.y - largest_distance,
     };
-    const t2 = Point.{
+    const t2 = Point {
         .x = win_center.x + largest_distance,
         .y = win_center.y + largest_distance,
     };
@@ -2066,7 +2066,7 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
         if (win_s == null) continue;
         const geo = win_s.?.value.geo;
 
-        var closest_win_point = Point.{
+        var closest_win_point = Point {
             .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
             .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
         };
@@ -2108,7 +2108,7 @@ fn keypressChangeRight(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_k
             const x_midpoint = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width);
             if (x_midpoint < win_center.x) continue;
 
-            const closest_win_point = Point.{
+            const closest_win_point = Point {
                 .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
                 .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
             };
@@ -2157,7 +2157,7 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
-    const win_center = Point.{
+    const win_center = Point {
         .x = win_geo.x + @intCast(i16, win_geo.width / 2) + @intCast(i16, g_border_width),
         .y = win_geo.y + @intCast(i16, win_geo.height / 2) + @intCast(i16, g_border_width),
     };
@@ -2190,11 +2190,11 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
         }
     };
 
-    const t1 = Point.{
+    const t1 = Point {
         .x = win_center.x - largest_distance,
         .y = win_center.y - largest_distance,
     };
-    const t2 = Point.{
+    const t2 = Point {
         .x = win_center.x + largest_distance,
         .y = win_center.y - largest_distance,
     };
@@ -2207,7 +2207,7 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
         if (win_s == null) continue;
         const geo = win_s.?.value.geo;
 
-        var closest_win_point = Point.{
+        var closest_win_point = Point {
             .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
             .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
         };
@@ -2249,7 +2249,7 @@ fn keypressChangeUp(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_key_
 
             if (y_midpoint > win_center.y) continue;
 
-            const closest_win_point = Point.{
+            const closest_win_point = Point {
                 .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
                 .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
             };
@@ -2297,7 +2297,7 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     const screen = getScreen(win.?.value.screen_index, screens);
     var new_screen = screen;
 
-    const win_center = Point.{
+    const win_center = Point {
         .x = win_geo.x + @intCast(i16, win_geo.width / 2) + @intCast(i16, g_border_width),
         .y = win_geo.y + @intCast(i16, win_geo.height / 2) + @intCast(i16, g_border_width),
     };
@@ -2331,11 +2331,11 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
     };
 
 
-    const t1 = Point.{
+    const t1 = Point {
         .x = win_center.x - largest_distance,
         .y = win_center.y + largest_distance,
     };
-    const t2 = Point.{
+    const t2 = Point {
         .x = win_center.x + largest_distance,
         .y = win_center.y + largest_distance,
     };
@@ -2349,7 +2349,7 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
         if (win_s == null) continue;
         const geo = win_s.?.value.geo;
 
-        var closest_win_point = Point.{
+        var closest_win_point = Point {
             .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
             .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
         };
@@ -2393,7 +2393,7 @@ fn keypressChangeDown(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb_ke
 
             if (y_midpoint < win_center.y) continue;
 
-            const closest_win_point = Point.{
+            const closest_win_point = Point {
                 .x = geo.x + @intCast(i16, geo.width / 2) + @intCast(i16, g_border_width),
                 .y = geo.y + @intCast(i16, geo.height / 2) + @intCast(i16, g_border_width),
             };
@@ -2559,7 +2559,7 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
                 win.geo = screen.recalculateWindowGeometry(win.geo, item);
                 win.screen_index = item.index;
 
-                window_change = WindowChange.{
+                window_change = WindowChange {
                     .id = win.id,
                     .mask = @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_X))
                           | @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_Y))
@@ -2567,7 +2567,7 @@ fn keypressWindowToGroup(allocator: *Allocator, dpy: ?*xcb_connection_t, e: *xcb
                           | @intCast(u16, @enumToInt(XCB_CONFIG_WINDOW_HEIGHT)),
                     .values = ArrayList(i32).init(allocator),
                 };
-                try window_change.?.values.appendSlice([]i32.{
+                try window_change.?.values.appendSlice([]i32 {
                     win.geo.x,
                     win.geo.y,
                     win.geo.width,
@@ -2653,14 +2653,14 @@ fn buttonpressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_gene
                                 new_geometry = buttonpressMotionResizeWindowInBounds(e, e_inside, active_screen, win.?.value.geo);
 
                                 win_mask = _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
-                                win_values = []i32.{new_geometry.width, new_geometry.height};
+                                win_values = []i32 {new_geometry.width, new_geometry.height};
                             },
                             MouseAction.Resize => {
                                 warn("mouse resize.\n");
                                 new_geometry = buttonpressMotionResizeWindow(e, e_inside, win.?.value.geo);
 
                                 win_mask = _XCB_CONFIG_WINDOW_WIDTH | _XCB_CONFIG_WINDOW_HEIGHT;
-                                win_values = []i32.{new_geometry.width, new_geometry.height};
+                                win_values = []i32 {new_geometry.width, new_geometry.height};
                             },
                             MouseAction.MoveInBounds => {
                                 // warn("mouse move inbounds.\n");
@@ -2668,14 +2668,14 @@ fn buttonpressEvent(allocator: *Allocator, dpy: ?*xcb_connection_t, ev: xcb_gene
                                 new_geometry = buttonpressMotionMoveWindowInBounds(e, e_inside, screen, win.?.value.geo);
 
                                 win_mask = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y;
-                                win_values = []i32.{new_geometry.x, new_geometry.y};
+                                win_values = []i32 {new_geometry.x, new_geometry.y};
                             },
                             MouseAction.Move => {
                                 warn("mouse move.\n");
                                 new_geometry = buttonpressMotionMoveWindow(e, e_inside, win.?.value.geo);
 
                                 win_mask = _XCB_CONFIG_WINDOW_X | _XCB_CONFIG_WINDOW_Y;
-                                win_values = []i32.{new_geometry.x, new_geometry.y};
+                                win_values = []i32 {new_geometry.x, new_geometry.y};
                             },
                         }
                     }
@@ -2740,7 +2740,7 @@ fn buttonpressMotionMoveWindow(e: *xcb_button_press_event_t, e_inside: *xcb_moti
     const x: i16 = geo.x + xdiff;
     const y: i16 = geo.y + ydiff;
 
-    return Geometry.{
+    return Geometry {
         .x = x,
         .y = y,
         .width = geo.width,
@@ -2756,7 +2756,7 @@ fn buttonpressMotionResizeWindowInBounds(e: *xcb_button_press_event_t, e_inside:
 
     var new_geometry = inBoundsWindowGeometry(geo.x, geo.y, width,height, screen);
 
-    return Geometry.{
+    return Geometry {
         .x = geo.x,
         .y = geo.y,
         .width = new_geometry.width,
@@ -2771,7 +2771,7 @@ fn buttonpressMotionResizeWindow(e: *xcb_button_press_event_t, e_inside: *xcb_mo
     const width = @intCast(i16, geo.width) + xdiff;
     const height = @intCast(i16, geo.height) + ydiff;
 
-    return Geometry.{
+    return Geometry {
         .x = geo.x,
         .y = geo.y,
         .width = @intCast(u16, std.math.max(@intCast(i16, g_window_min_width), width)),
@@ -2842,7 +2842,7 @@ fn newGeometryInsideScreen(geo: Geometry, screen: Screen) Geometry {
 
     y = std.math.max(sp, y) + screen.geo.y;
 
-    return Geometry.{
+    return Geometry {
         .x = @intCast(i16, x),
         .y = @intCast(i16, y),
         .width = @intCast(u16, width),

@@ -10,7 +10,7 @@ pub fn build(b: *Builder) void {
 
     const exe = b.addExecutable("buoy", "src/main.zig");
 
-    exe.addCompileFlags([][]const u8.{
+    exe.addCompileFlags([][]const u8{
         "-std=c99",
     //     "-nostdlib",
     });
@@ -45,7 +45,7 @@ pub fn build(b: *Builder) void {
     // _ = my_env_map.set("DISPLAY", ":1");
     // defer my_env_map.deinit();
     // const run_step = b.step("run", "Run the app");
-    // const run_cmd = b.addCommand(".", b.env_map, [][]const u8.{
+    // const run_cmd = b.addCommand(".", b.env_map, [][]const u8{
     //     exe.getOutputPath(),
     // });
     // run_step.dependOn(&run_cmd.step);
