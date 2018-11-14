@@ -191,3 +191,9 @@ xcb_void_cookie_t *_xcb_create_window(xcb_connection_t *conn, uint8_t depth, xcb
   return return_pointer;
 }
 
+xcb_get_window_attributes_cookie_t *_xcb_get_window_attributes(xcb_connection_t *conn, xcb_window_t window, xcb_get_window_attributes_cookie_t *return_pointer) {
+  xcb_get_window_attributes_cookie_t result = xcb_get_window_attributes(conn, window);
+  *return_pointer = result;
+  return return_pointer;
+}
+

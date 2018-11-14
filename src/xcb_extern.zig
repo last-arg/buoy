@@ -68,3 +68,5 @@ pub extern fn _xcb_send_event(c: ?*xcb_connection_t, propagate: u8, destination:
 
 pub extern fn _xcb_create_window(c: ?*xcb_connection_t, depth: u8, wid: xcb_window_t, parent: xcb_window_t, x: i16, y: i16, width: u16, height: u16, border_width: u16, _class: u16, visual: xcb_visualid_t, value_mask: u32, value_list: ?*const c_void, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
+
+pub extern fn _xcb_get_window_attributes(c: ?*xcb_connection_t, window: xcb_window_t, return_pointer: *xcb_get_window_attributes_cookie_t) *xcb_get_window_attributes_cookie_t;
