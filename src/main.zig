@@ -104,30 +104,20 @@ fn ScreenFn() type {
             return win.*;
         }
 
-        // TODO: fix calculations
+        // TODO: move function out of the struct
         pub fn recalculateWindowGeometry(self: *Screen, geo: Geometry, dest_screen: *Screen) Geometry {
-            const new_width = @intToFloat(f32, geo.width) * (@intToFloat(f32, dest_screen.geo.width) / @intToFloat(f32, self.geo.width));
-            const new_height = @intToFloat(f32, geo.height) * (@intToFloat(f32, dest_screen.geo.height) / @intToFloat(f32, self.geo.height));
-
-            var new_x = geo.x;
-            if (dest_screen.geo.x < self.geo.x) {
-                new_x -= self.geo.x;
-            } else if (dest_screen.geo.x > self.geo.x) {
-                new_x += dest_screen.geo.x;
-            }
-
-            var new_y = geo.y;
-            if (dest_screen.geo.y < self.geo.y) {
-                new_y -= self.geo.y;
-            } else if (dest_screen.geo.y > self.geo.y) {
-                new_y += dest_screen.geo.y;
-            }
+            const width_ratio = @intToFloat(f32, dest_screen.geo.width) / @intToFloat(f32, self.geo.width);
+            const height_ratio = @intToFloat(f32, dest_screen.geo.height) / @intToFloat(f32, self.geo.height);
+            const new_width = @floatToInt(u16, @intToFloat(f32, geo.width) * width_ratio);
+            const new_height = @floatToInt(u16, @intToFloat(f32, geo.height) * height_ratio);
+            const new_x = @floatToInt(i16, @intToFloat(f32, geo.x - self.geo.x) * width_ratio);
+            const new_y = @floatToInt(i16, @intToFloat(f32, geo.y - self.geo.y) * height_ratio);
 
             return Geometry {
-                .x = new_x,
-                .y = new_y,
-                .width = @floatToInt(u16, new_width),
-                .height = @floatToInt(u16, new_height),
+                .x = new_x + dest_screen.geo.x,
+                .y = new_y + dest_screen.geo.y,
+                .width = new_width,
+                .height = new_height,
             };
         }
 
