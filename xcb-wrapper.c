@@ -88,13 +88,6 @@ xcb_query_pointer_cookie_t *_xcb_query_pointer(xcb_connection_t *conn, xcb_windo
   return return_pointer;
 }
 
-// NOTE: not on zig side
-xcb_translate_coordinates_cookie_t *_xcb_translate_coordinates(xcb_connection_t *conn, xcb_window_t src_window, xcb_window_t dst_window, int16_t src_x, int16_t src_y, xcb_translate_coordinates_cookie_t *return_pointer) {
-  xcb_translate_coordinates_cookie_t result = xcb_translate_coordinates(conn, src_window, dst_window, src_x, src_y);
-  *return_pointer = result;
-  return return_pointer;
-}
-
 xcb_get_geometry_cookie_t *_xcb_get_geometry(xcb_connection_t *conn, xcb_drawable_t drawable, xcb_get_geometry_cookie_t *return_pointer) {
   xcb_get_geometry_cookie_t result = xcb_get_geometry(conn, drawable);
   *return_pointer = result;
@@ -193,6 +186,12 @@ xcb_void_cookie_t *_xcb_create_window(xcb_connection_t *conn, uint8_t depth, xcb
 
 xcb_get_window_attributes_cookie_t *_xcb_get_window_attributes(xcb_connection_t *conn, xcb_window_t window, xcb_get_window_attributes_cookie_t *return_pointer) {
   xcb_get_window_attributes_cookie_t result = xcb_get_window_attributes(conn, window);
+  *return_pointer = result;
+  return return_pointer;
+}
+
+xcb_translate_coordinates_cookie_t *_xcb_translate_coordinates(xcb_connection_t *conn, xcb_window_t src_window, xcb_window_t dst_window, int16_t src_x, int16_t src_y, xcb_translate_coordinates_cookie_t *return_pointer) {
+  xcb_translate_coordinates_cookie_t result = xcb_translate_coordinates(conn, src_window, dst_window, src_x, src_y);
   *return_pointer = result;
   return return_pointer;
 }

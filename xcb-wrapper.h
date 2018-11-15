@@ -30,9 +30,6 @@ xcb_query_tree_cookie_t *_xcb_query_tree(xcb_connection_t *conn, xcb_window_t wi
 
 xcb_query_pointer_cookie_t *_xcb_query_pointer(xcb_connection_t *conn, xcb_window_t window, xcb_query_pointer_cookie_t *return_pointer);
 
-// NOTE: not on zig side
-xcb_translate_coordinates_cookie_t *_xcb_translate_coordinates(xcb_connection_t *conn, xcb_window_t src_window, xcb_window_t dst_window, int16_t src_x, int16_t src_y, xcb_translate_coordinates_cookie_t *return_pointer);
-
 xcb_get_geometry_cookie_t *_xcb_get_geometry(xcb_connection_t *conn, xcb_drawable_t drawable, xcb_get_geometry_cookie_t *return_pointer);
 
 xcb_grab_pointer_cookie_t *_xcb_grab_pointer(xcb_connection_t *conn, uint8_t owner_events, xcb_window_t grab_window, uint16_t event_mask, uint8_t pointer_mode, uint8_t keyboard_mode, xcb_window_t confine_to, xcb_cursor_t cursor, xcb_timestamp_t time, xcb_grab_pointer_cookie_t *return_pointer);
@@ -67,3 +64,5 @@ xcb_void_cookie_t *_xcb_send_event(xcb_connection_t *conn, uint8_t propagate, xc
 xcb_void_cookie_t *_xcb_create_window(xcb_connection_t *conn, uint8_t depth, xcb_window_t wid, xcb_window_t parent, int16_t x, int16_t y, uint16_t width, uint16_t height, uint16_t border_width, uint16_t _class, xcb_visualid_t visual, uint32_t value_mask, const void *value_list, xcb_void_cookie_t *return_pointer);
 
 xcb_get_window_attributes_cookie_t *_xcb_get_window_attributes(xcb_connection_t *conn, xcb_window_t window, xcb_get_window_attributes_cookie_t *return_pointer);
+
+xcb_translate_coordinates_cookie_t *_xcb_translate_coordinates(xcb_connection_t *conn, xcb_window_t src_window, xcb_window_t dst_window, int16_t src_x, int16_t src_y, xcb_translate_coordinates_cookie_t *return_pointer);

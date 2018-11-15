@@ -38,9 +38,6 @@ pub extern fn _xcb_grab_pointer(c: ?*xcb_connection_t, owner_events: u8, grab_wi
 
 pub extern fn _xcb_ungrab_pointer(c: ?*xcb_connection_t, time_0: xcb_timestamp_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
-
-// pub extern fn _xcb_translate_coordinates(c: ?*xcb_connection_t, src_window: xcb_window_t, dst_window: xcb_window_t, src_x: i16, src_y: i16, return_pointer: *xcb_translate_coordinates_cookie_t) *xcb_translate_coordinates_cookie_t;
-
 pub extern fn _xcb_set_input_focus(c: ?*xcb_connection_t, revert_to: u8, focus: xcb_window_t, time_0: xcb_timestamp_t, return_pointer: *xcb_void_cookie_t) *xcb_void_cookie_t;
 
 pub extern fn _xcb_get_input_focus(c: ?*xcb_connection_t, return_pointer: *xcb_get_input_focus_cookie_t) *xcb_get_input_focus_cookie_t;
@@ -70,3 +67,8 @@ pub extern fn _xcb_create_window(c: ?*xcb_connection_t, depth: u8, wid: xcb_wind
 
 
 pub extern fn _xcb_get_window_attributes(c: ?*xcb_connection_t, window: xcb_window_t, return_pointer: *xcb_get_window_attributes_cookie_t) *xcb_get_window_attributes_cookie_t;
+
+pub extern fn _xcb_translate_coordinates(c: ?*xcb_connection_t, src_window: xcb_window_t, dst_window: xcb_window_t, src_x: i16, src_y: i16, return_pointer: *xcb_translate_coordinates_cookie_t) *xcb_translate_coordinates_cookie_t;
+
+
+
